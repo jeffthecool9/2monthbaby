@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cat > vercel.json <<'EOF'\\n{ \\\"rewrites\\\": [{ \\\"source\\\": \\\"/(.*)\\\", \\\"destination\\\": \\\"/index.html\\\" }] }\\nEOF\\ncat > tsconfig.json <<'EOF'\\n{\\n  \\\"compilerOptions\\\": {\\n    \\\"target\\\": \\...",
+  "error": "This session is isolated in the worktree /Users/jeffyeap/2monthbaby/.claude/worktrees/couple-home, but this command is too complex to verify that it stays inside the worktree. Refusing to run it — a worktree-isolated session's git operations must target its own worktree. Split it into plain, separate commands and run them from /Users/jeffyeap/2monthbaby/.claude/worktrees/couple-home.",
+  "timestamp": "2026-11-11T12:11:43.440Z",
+  "retry_count": 2
+}
