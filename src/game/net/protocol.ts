@@ -1,0 +1,80 @@
+import { LOOK_OPTIONS, type CharacterLook } from '../character/look'
+import type { FurnitureId } from '../world/layout'
+import type { Activity, EmoteKind, InteractionKind, Role, UserId, Vec2 } from '../types'
+
+export type PresenceState = {
+  userId: UserId
+  name: string
+  role: Role
+  look: CharacterLook
+  pos: Vec2
+  facing: number
+  activity: Activity
+  furniture?: FurnitureId
+}
+
+export type NetMsg =
+  | { t: 'move'; from: UserId; path: Vec2[]; at: number }
+  | { t: 'interact'; id: string; from: UserId; to: UserId; kind: InteractionKind; at: number }
+  | { t: 'interact-request'; id: string; from: UserId; to: UserId; kind: InteractionKind; at: number }
+  | { t: 'interact-accept'; id: string; from: UserId }
+  | { t: 'interact-cancel'; id: string; from: UserId }
+  | { t: 'chat'; id: string; from: UserId; text: string; at: number }
+  | { t: 'emote'; from: UserId; emote: EmoteKind; at: number }
+  | { t: 'look'; from: UserId; look: CharacterLook }
+
+export const QUICK_MESSAGES = ['Hello 👋', 'Byebye 👋', 'Kiss 😘', 'Miss you 🥺', 'Good night 🌙', 'Hungry 🍜', 'Love you ❤️']
+export const MAX_CHAT = 200
+const MAX_PATH = 400
+
+export const INTERACTION_KINDS: readonly InteractionKind[] = ['kiss', 'hug', 'highfive', 'comfort', 'wave']
+export const EMOTE_KINDS: readonly EmoteKind[] = ['happy', 'shy', 'angry', 'crying', 'love', 'sleepy']
+
+export function cleanChat(s: string): string | null {
+  const t = s.trim()
+  return t ? t.slice(0, MAX_CHAT) : null
+}
+
+const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 100
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isVec = (v: unknown): v is Vec2 =>
+  !!v && typeof v === 'object' && isNum((v as Vec2).x) && isNum((v as Vec2).z)
+
+export function isValidLook(v: unknown): v is CharacterLook {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  return (Object.keys(LOOK_OPTIONS) as (keyof CharacterLook)[]).every(
+    (k) => typeof o[k] === 'string' && LOOK_OPTIONS[k].includes(o[k] as string),
+  )
+}
+
+export function parseMsg(x: unknown): NetMsg | null {
+  if (!x || typeof x !== 'object') return null
+  const m = x as Record<string, unknown>
+  switch (m.t) {
+    case 'move':
+      return isStr(m.from) && isNum(m.at) && Array.isArray(m.path) && m.path.length > 0 && m.path.length <= MAX_PATH && m.path.every(isVec)
+        ? { t: 'move', from: m.from, path: m.path.map((p: Vec2) => ({ x: p.x, z: p.z })), at: m.at }
+        : null
+    case 'interact':
+    case 'interact-request':
+      return isStr(m.id) && isStr(m.from) && isStr(m.to) && isNum(m.at) && INTERACTION_KINDS.includes(m.kind as InteractionKind)
+        ? { t: m.t, id: m.id, from: m.from, to: m.to, kind: m.kind as InteractionKind, at: m.at }
+        : null
+    case 'interact-accept':
+    case 'interact-cancel':
+      return isStr(m.id) && isStr(m.from) ? { t: m.t, id: m.id, from: m.from } : null
+    case 'chat': {
+      const text = typeof m.text === 'string' ? cleanChat(m.text) : null
+      return isStr(m.id) && isStr(m.from) && isNum(m.at) && text ? { t: 'chat', id: m.id, from: m.from, text, at: m.at } : null
+    }
+    case 'emote':
+      return isStr(m.from) && isNum(m.at) && EMOTE_KINDS.includes(m.emote as EmoteKind)
+        ? { t: 'emote', from: m.from, emote: m.emote as EmoteKind, at: m.at }
+        : null
+    case 'look':
+      return isStr(m.from) && isValidLook(m.look) ? { t: 'look', from: m.from, look: { ...m.look } } : null
+    default:
+      return null
+  }
+}
