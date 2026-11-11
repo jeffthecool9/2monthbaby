@@ -48,6 +48,21 @@ export function isValidLook(v: unknown): v is CharacterLook {
   )
 }
 
+const ACTIVITIES: readonly Activity[] = ['idle', 'walking', 'interacting', 'sitting', 'sleeping']
+
+export function parsePresence(x: unknown): PresenceState | null {
+  if (!x || typeof x !== 'object') return null
+  const s = x as Record<string, unknown>
+  if (!isStr(s.userId) || typeof s.name !== 'string' || (s.role !== 'female' && s.role !== 'male')) return null
+  if (!isValidLook(s.look) || !isVec(s.pos) || !isNum(s.facing) || !ACTIVITIES.includes(s.activity as Activity)) return null
+  const out: PresenceState = {
+    userId: s.userId, name: s.name.slice(0, 40), role: s.role, look: { ...s.look },
+    pos: { x: s.pos.x, z: s.pos.z }, facing: s.facing, activity: s.activity as Activity,
+  }
+  if (typeof s.furniture === 'string') out.furniture = s.furniture as FurnitureId
+  return out
+}
+
 export function parseMsg(x: unknown): NetMsg | null {
   if (!x || typeof x !== 'object') return null
   const m = x as Record<string, unknown>
