@@ -1,29 +1,41 @@
-// Glue between the pure sim, the Room (network) and Babylon (rendering + input).
-import { Matrix, Vector3, type PointerInfo, PointerEventTypes } from '@babylonjs/core'
+// Glue between the pure sim, the Room (network) and three.js (rendering + input).
+import { Raycaster, Spherical, Vector2, Vector3, type Object3D } from 'three'
 import type { CharacterLook } from './character/look'
 import { sampleClip } from './character/poses'
-import { createScene, type SceneBundle } from './engine/createScene'
-import { buildApartment, type Apartment } from './engine/apartment'
-import { CHIBI_TOP, Chibi } from './engine/chibi'
-import { addBirthdayDecor } from './engine/decor'
+import { createStage, type Stage } from './three/stage'
+import { buildApartment, type Apartment } from './three/apartment'
+import { buildCity, type City } from './three/city'
+import { Avatar, PLACEHOLDER_AVATAR } from './three/avatar'
+import { addBirthdayDecor } from './three/decor'
 import { classifyGesture, type PointerSample } from './input/gesture'
 import { cleanChat, type PresenceState } from './net/protocol'
 import type { Room } from './net/room'
-import { createSim, step, type Avatar, type HudEvent, type Identity, type SimEvent, type SimState } from './sim/sim'
+import { createSim, step, type Avatar as SimAvatar, type HudEvent, type Identity, type SimEvent, type SimState } from './sim/sim'
 import type { FurnitureAction, FurnitureId } from './world/layout'
 import type { EmoteKind, InteractionKind, UserId } from './types'
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)
 
+export type GameOptions = {
+  lite?: boolean
+  birthdayName?: string | null
+  /** VRoid (.vrm) URL per user; falls back to the bundled placeholders. */
+  avatarUrls?: Partial<Record<UserId, string>>
+}
+
+type CamGoal = { radius: number; phi: number; y: number; offsetY: number; release?: boolean }
+
 export class GameController {
   private canvas: HTMLCanvasElement
   private room: Room
   private meStart: PresenceState
-  private partnerHint: Identity | null
-  private bundle: SceneBundle | null = null
+  private opts: GameOptions
+  private stage: Stage | null = null
   private apt: Apartment | null = null
+  private city: City | null = null
+  private birthday: ReturnType<typeof addBirthdayDecor> | null = null
   private sim: SimState
-  private chibis = new Map<UserId, { chibi: Chibi; lookKey: string; expr: string }>()
+  private avatars = new Map<UserId, { avatar: Avatar; expr: string }>()
   private hudListeners = new Set<(e: HudEvent) => void>()
   private unsubs: (() => void)[] = []
   private lastPresenceKey = ''
@@ -31,36 +43,51 @@ export class GameController {
   private down: PointerSample | null = null
   private maxPointers = 0
   private activePointers = new Set<number>()
-  private lite: boolean
   private disposed = false
+  private raycaster = new Raycaster()
+  private camGoal: CamGoal | null = null
+  private savedCam: { radius: number; phi: number } | null = null
+  private lastHop = 0
 
-  private birthdayName: string | null
-
-  constructor(canvas: HTMLCanvasElement, room: Room, me: PresenceState, partnerHint: Identity | null, opts: { lite?: boolean; birthdayName?: string | null } = {}) {
+  constructor(canvas: HTMLCanvasElement, room: Room, me: PresenceState, partnerHint: Identity | null, opts: GameOptions = {}) {
     this.canvas = canvas
     this.room = room
     this.meStart = me
-    this.partnerHint = partnerHint
-    this.lite = !!opts.lite
-    this.birthdayName = opts.birthdayName ?? null
+    this.opts = opts
     this.sim = createSim({ userId: me.userId, name: me.name, role: me.role, look: me.look }, me.pos, partnerHint)
   }
 
   async start(): Promise<void> {
-    const bundle = createScene(this.canvas, { lite: this.lite })
-    this.bundle = bundle
-    this.apt = await buildApartment(bundle.scene, bundle.shadows)
+    const stage = createStage(this.canvas, { lite: this.opts.lite })
+    this.stage = stage
+    this.city = buildCity({ lite: this.opts.lite })
+    stage.scene.add(this.city.root)
+    this.apt = await buildApartment({ lite: this.opts.lite })
     if (this.disposed) return
-    if (this.birthdayName) addBirthdayDecor(bundle.scene, this.birthdayName)
+    stage.scene.add(this.apt.root)
+    if (this.opts.birthdayName) {
+      this.birthday = addBirthdayDecor(this.opts.birthdayName)
+      stage.scene.add(this.birthday.root)
+    }
     this.unsubs.push(this.room.onMessage((msg) => this.dispatch({ type: 'net', msg })))
     this.unsubs.push(this.room.onPresence((others) => this.dispatch({ type: 'presence', others })))
+
     // Show the home right away; connecting happens alongside (and retries on bad 4G).
-    bundle.scene.onPointerObservable.add((info) => this.onPointer(info))
-    this.lastFrame = Date.now()
-    bundle.engine.runRenderLoop(() => this.frame())
-    const onResize = () => bundle.engine.resize()
+    const onDown = (e: PointerEvent) => this.onPointer('down', e)
+    const onUp = (e: PointerEvent) => this.onPointer('up', e)
+    this.canvas.addEventListener('pointerdown', onDown)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    const onResize = () => stage.resize()
     window.addEventListener('resize', onResize)
-    this.unsubs.push(() => window.removeEventListener('resize', onResize))
+    this.unsubs.push(() => {
+      this.canvas.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('resize', onResize)
+    })
+    this.lastFrame = Date.now()
+    stage.renderer.setAnimationLoop(() => this.frame())
     void this.connect()
 
     // Closing the tab or swiping the app away: tell the partner straight away.
@@ -77,23 +104,21 @@ export class GameController {
     // reconnect on return so we reappear for each other without a reload.
     const onVisibility = () => {
       if (document.hidden) {
-        bundle.engine.stopRenderLoop()
+        stage.renderer.setAnimationLoop(null)
         this.room.pause()
       } else {
         void this.room.resume()
         this.lastFrame = Date.now()
-        bundle.engine.stopRenderLoop()
-        bundle.engine.runRenderLoop(() => this.frame())
+        stage.renderer.setAnimationLoop(() => this.frame())
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
     this.unsubs.push(() => document.removeEventListener('visibilitychange', onVisibility))
 
-    // iOS can drop the WebGL context under memory pressure; Babylon rebuilds it, we redraw faces.
-    bundle.engine.onContextLostObservable.add(() => this.emitHud({ type: 'toast', text: 'Reconnecting…' }))
-    bundle.engine.onContextRestoredObservable.add(() => {
-      for (const entry of this.chibis.values()) entry.expr = ''
-    })
+    // iOS can drop the WebGL context under memory pressure; three restores it on its own.
+    const onLost = () => this.emitHud({ type: 'toast', text: 'Reconnecting…' })
+    this.canvas.addEventListener('webglcontextlost', onLost)
+    this.unsubs.push(() => this.canvas.removeEventListener('webglcontextlost', onLost))
   }
 
   private async connect() {
@@ -156,47 +181,49 @@ export class GameController {
     }
   }
 
-  private camGoal: { radius: number; beta: number; y: number; offsetY: number; alpha?: number; release?: boolean } | null = null
-  private savedCam: { radius: number; beta: number; alpha: number } | null = null
-  private lastHop = 0
+  /** Swap a character's VRoid model (e.g. after uploading a new .vrm). */
+  setAvatarUrl(userId: UserId, url: string) {
+    this.opts.avatarUrls = { ...this.opts.avatarUrls, [userId]: url }
+    void this.avatars.get(userId)?.avatar.load(url)
+  }
 
   /** Wardrobe close-up: zoom onto my character, who turns to face the camera. */
   focusOnMe(on: boolean) {
-    const cam = this.bundle?.camera
-    if (!cam) return
+    const stage = this.stage
+    if (!stage) return
+    const { camera, controls } = stage
+    const sph = new Spherical().setFromVector3(camera.position.clone().sub(controls.target))
     if (on) {
-      this.savedCam = { radius: cam.radius, beta: cam.beta, alpha: cam.alpha }
-      cam.lowerRadiusLimit = 1.2
-      cam.upperBetaLimit = 1.5
-      // Character faces the camera: camera sits at angle alpha around the target.
-      const toCam = Math.atan2(Math.cos(cam.alpha), Math.sin(cam.alpha))
+      this.savedCam = { radius: sph.radius, phi: sph.phi }
+      controls.minDistance = 1.2
+      controls.maxPolarAngle = 1.55
+      // Turn to face the camera: direction from me to the camera on the floor plane.
+      const toCam = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z)
       this.dispatch({ type: 'face', facing: toCam })
-      this.camGoal = { radius: 1.9, beta: 1.36, y: 0.55, offsetY: -0.45 }
+      this.camGoal = { radius: 2.3, phi: 1.42, y: 1.0, offsetY: -0.22 }
     } else {
-      const s = this.savedCam ?? { radius: 8, beta: 0.95, alpha: cam.alpha }
-      this.camGoal = { radius: s.radius, beta: s.beta, y: 0.6, offsetY: 0, release: true }
+      const s = this.savedCam ?? { radius: 7, phi: 0.95 }
+      this.camGoal = { radius: s.radius, phi: s.phi, y: 0.9, offsetY: 0, release: true }
     }
   }
 
   /** CSS-pixel position just above a character's head, for speech bubbles and wheels. */
   screenPosOf(userId: UserId): { x: number; y: number } | null {
-    const entry = this.chibis.get(userId)
-    const b = this.bundle
-    if (!entry || !b) return null
-    const world = entry.chibi.root.position.add(CHIBI_TOP)
-    const w = b.engine.getRenderWidth(), h = b.engine.getRenderHeight()
-    const p = Vector3.Project(world, Matrix.Identity(), b.scene.getTransformMatrix(), b.camera.viewport.toGlobal(w, h))
-    if (p.z < 0 || p.z > 1) return null
-    const sx = this.canvas.clientWidth / w, sy = this.canvas.clientHeight / h
-    return { x: p.x * sx, y: p.y * sy }
+    const entry = this.avatars.get(userId)
+    const stage = this.stage
+    if (!entry || !stage) return null
+    const p = new Vector3(0, entry.avatar.headHeight, 0).add(entry.avatar.root.position).project(stage.camera)
+    if (p.z < -1 || p.z > 1) return null
+    return { x: ((p.x + 1) / 2) * this.canvas.clientWidth, y: ((1 - p.y) / 2) * this.canvas.clientHeight }
   }
 
   dispose() {
     this.disposed = true
     for (const u of this.unsubs) u()
     void this.room.leave()
-    for (const { chibi } of this.chibis.values()) chibi.dispose()
-    this.bundle?.engine.dispose()
+    for (const { avatar } of this.avatars.values()) avatar.dispose()
+    this.stage?.renderer.setAnimationLoop(null)
+    this.stage?.dispose()
   }
 
   private dispatch(e: SimEvent) {
@@ -209,8 +236,7 @@ export class GameController {
     if (outbox.length || hud.length) this.sim = { ...this.sim, outbox: [], hud: [] }
     for (const m of outbox) this.room.send(m)
     for (const h of hud) for (const cb of this.hudListeners) cb(h)
-    const me = this.sim.me
-    const presence: Partial<PresenceState> = { pos: me.pos, facing: me.facing, activity: me.activity, look: me.look, furniture: me.furniture }
+    const presence = this.presenceNow()
     const key = JSON.stringify(presence)
     if (key !== this.lastPresenceKey) {
       this.lastPresenceKey = key
@@ -219,89 +245,102 @@ export class GameController {
   }
 
   private frame() {
-    const b = this.bundle!
+    const stage = this.stage!
     const now = Date.now()
     const dt = Math.min(100, now - this.lastFrame)
     this.lastFrame = now
     this.dispatch({ type: 'tick', dt })
-    this.render(this.sim.me, now)
-    if (this.sim.partner) this.render(this.sim.partner, now)
+    this.renderAvatar(this.sim.me, now, dt)
+    if (this.sim.partner) this.renderAvatar(this.sim.partner, now, dt)
+
+    const { camera, controls } = stage
     const me = this.sim.me
-    const cam = b.camera
-    const target = cam.target
     const k = Math.min(1, dt / 250)
-    target.x += (me.pos.x - target.x) * k
-    target.z += (me.pos.z - target.z) * k
-    // Ease the camera toward the wardrobe close-up (or back to the saved view).
+    // Follow me smoothly: move target and camera together so the orbit is kept.
+    const dx = (me.pos.x - controls.target.x) * k, dz = (me.pos.z - controls.target.z) * k
+    controls.target.x += dx
+    controls.target.z += dz
+    camera.position.x += dx
+    camera.position.z += dz
+
     const goal = this.camGoal
     if (goal) {
       const e = Math.min(1, dt / 220)
-      cam.radius += (goal.radius - cam.radius) * e
-      cam.beta += (goal.beta - cam.beta) * e
-      target.y += (goal.y - target.y) * e
-      cam.targetScreenOffset.y += (goal.offsetY - cam.targetScreenOffset.y) * e
-      if (goal.alpha !== undefined) cam.alpha += (goal.alpha - cam.alpha) * e
-      if (goal.release && Math.abs(goal.radius - cam.radius) < 0.02) {
-        cam.lowerRadiusLimit = 4
-        cam.upperBetaLimit = 1.2
+      const offset = camera.position.clone().sub(controls.target)
+      const sph = new Spherical().setFromVector3(offset)
+      sph.radius += (goal.radius - sph.radius) * e
+      sph.phi += (goal.phi - sph.phi) * e
+      controls.target.y += (goal.y - controls.target.y) * e
+      camera.position.copy(controls.target).add(new Vector3().setFromSpherical(sph))
+      stage.screenOffset.y += (goal.offsetY - stage.screenOffset.y) * e
+      if (goal.release && Math.abs(goal.radius - sph.radius) < 0.03) {
+        controls.minDistance = 3
+        controls.maxPolarAngle = 1.25
+        stage.screenOffset.y = 0
         this.camGoal = null
       }
     }
-    this.apt?.updateCutaway({ x: cam.position.x, z: cam.position.z }, me.pos)
-    b.scene.render()
+
+    this.apt?.updateCutaway({ x: camera.position.x, z: camera.position.z }, me.pos)
+    this.apt?.update(dt, now)
+    this.city?.update(dt, now)
+    this.birthday?.update(now)
+    stage.render()
   }
 
-  private render(a: Avatar, now: number) {
-    const b = this.bundle!
-    let entry = this.chibis.get(a.userId)
-    const lookKey = JSON.stringify(a.look)
+  private renderAvatar(a: SimAvatar, now: number, dt: number) {
+    const stage = this.stage!
+    let entry = this.avatars.get(a.userId)
     if (!entry) {
-      const chibi = new Chibi(b.scene, a.look, b.shadows)
-      chibi.setUserId(a.userId)
-      entry = { chibi, lookKey, expr: '' }
-      this.chibis.set(a.userId, entry)
-    } else if (entry.lookKey !== lookKey) {
-      entry.chibi.setLook(a.look)
-      entry.lookKey = lookKey
+      const url = this.opts.avatarUrls?.[a.userId] ?? PLACEHOLDER_AVATAR[a.role]
+      const avatar = new Avatar(url)
+      avatar.setUserId(a.userId)
+      stage.scene.add(avatar.root)
+      entry = { avatar, expr: '' }
+      this.avatars.set(a.userId, entry)
     }
-    // On the mattress when asleep, on the cushion when sitting.
-    const y = a.activity === 'sleeping' ? 0.5 : a.activity === 'sitting' ? (a.furniture === 'sofa' ? 0.22 : 0.2) : 0
-    entry.chibi.setPosition(a.pos, a.facing, y)
-    entry.chibi.setPose(sampleClip(a.clip, now - a.clipStart))
-    const expr = a.activity === 'sleeping' ? 'sleepy' : a.expression
+    // Seat height on the sofa/chairs, mattress height when asleep.
+    const y = a.activity === 'sleeping' ? 0.48 : a.activity === 'sitting' ? -0.12 : 0
+    entry.avatar.setPosition(a.pos, a.facing, y)
+    // Dev-only: /home?local=1&pose=hug&t=1500 freezes everyone in a clip for checking animations.
+    const preview = import.meta.env.DEV ? new URLSearchParams(location.search) : null
+    const forced = preview?.get('pose') as Parameters<typeof sampleClip>[0] | null
+    entry.avatar.setPose(forced ? sampleClip(forced, Number(preview!.get('t') ?? 750)) : sampleClip(a.clip, now - a.clipStart))
+    const expr = a.activity === 'sleeping' ? 'sleepy' : a.clip === 'kiss' ? 'kiss' : a.expression
     if (expr !== entry.expr) {
-      entry.chibi.setExpression(expr)
+      entry.avatar.setExpression(expr as never)
       entry.expr = expr
     }
+    entry.avatar.update(dt)
   }
 
-  private onPointer(info: PointerInfo) {
-    const ev = info.event as PointerEvent
-    if (info.type === PointerEventTypes.POINTERDOWN) {
+  private onPointer(kind: 'down' | 'up', ev: PointerEvent) {
+    if (kind === 'down') {
       this.activePointers.add(ev.pointerId)
       if (this.activePointers.size === 1) {
         this.down = { x: ev.clientX, y: ev.clientY, t: performance.now() }
         this.maxPointers = 1
       } else this.maxPointers = Math.max(this.maxPointers, this.activePointers.size)
-    } else if (info.type === PointerEventTypes.POINTERUP) {
-      this.activePointers.delete(ev.pointerId)
-      const down = this.down
-      if (!down || this.activePointers.size) return
-      this.down = null
-      const kind = classifyGesture(down, { x: ev.clientX, y: ev.clientY, t: performance.now() }, this.maxPointers)
-      if (kind === 'tap') this.onTap(ev)
+      return
     }
+    if (!this.activePointers.delete(ev.pointerId)) return
+    const down = this.down
+    if (!down || this.activePointers.size) return
+    this.down = null
+    if (classifyGesture(down, { x: ev.clientX, y: ev.clientY, t: performance.now() }, this.maxPointers) === 'tap') this.onTap(ev)
   }
 
   private onTap(ev: PointerEvent) {
-    const b = this.bundle!
+    const stage = this.stage!
     const rect = this.canvas.getBoundingClientRect()
-    // scene.pick takes CSS pixels; Babylon applies the hardware scaling (retina) itself.
-    const pick = b.scene.pick(ev.clientX - rect.left, ev.clientY - rect.top, (m) => m.isPickable && !!m.metadata?.kind)
-    const meta = pick?.pickedMesh?.metadata as { kind?: string; id?: FurnitureId; userId?: UserId } | undefined
-    if (!pick?.hit || !meta) return
+    const ndc = new Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1)
+    this.raycaster.setFromCamera(ndc, stage.camera)
+    const targets: Object3D[] = [...(this.apt ? [this.apt.root] : []), ...[...this.avatars.values()].map((e) => e.avatar.root)]
+    const hit = this.raycaster.intersectObjects(targets, true).find((h) => h.object.visible && h.object.userData.kind)
+    if (!hit) return
+    const meta = hit.object.userData as { kind: string; id?: FurnitureId; userId?: UserId }
     const screen = { x: ev.clientX - rect.left, y: ev.clientY - rect.top }
-    if (meta.kind === 'floor' && pick.pickedPoint) this.dispatch({ type: 'tap-floor', point: { x: pick.pickedPoint.x, z: pick.pickedPoint.z } })
+    if (meta.kind === 'floor') this.dispatch({ type: 'tap-floor', point: { x: hit.point.x, z: hit.point.z } })
     else if (meta.kind === 'character' && meta.userId && meta.userId !== this.sim.me.userId) this.dispatch({ type: 'tap-partner', screen })
     else if (meta.kind === 'furniture' && meta.id) this.emitHud({ type: 'wheel-furniture', id: meta.id, screen })
   }

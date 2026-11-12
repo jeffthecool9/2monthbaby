@@ -72,5 +72,5 @@ export const FURNITURE: Furniture[] = [
 ]
 
 /** [female side, male side] of the bed: where the feet go, so heads rest on the pillows. */
-export const BED_SLEEP_SPOTS: [Vec2, Vec2] = [{ x: 5.8, z: 1.55 }, { x: 6.6, z: 1.55 }]
+export const BED_SLEEP_SPOTS: [Vec2, Vec2] = [{ x: 5.82, z: 2.0 }, { x: 6.58, z: 2.0 }]
 export const SPAWN: Vec2 = { x: 4.5, z: 4.2 }

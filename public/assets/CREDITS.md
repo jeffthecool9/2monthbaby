@@ -19,3 +19,8 @@ All assets below are CC0 (public domain) from [Poly Haven](https://polyhaven.com
 - **Electric Stove** (`electric_stove`) by Kuutti Siitonen: https://polyhaven.com/a/electric_stove
 - **Modern Ceiling Lamp 01** (`modern_ceiling_lamp_01`) by James Ray Cock: https://polyhaven.com/a/modern_ceiling_lamp_01
 - **Standing Picture Frame 01** (`standing_picture_frame_01`) by James Ray Cock: https://polyhaven.com/a/standing_picture_frame_01
+
+## Placeholder characters (VRM 1.0 samples)
+
+- **VRM1_Constraint_Twist_Sample** (`public/assets/avatars/her.vrm`) © 2022 pixiv Inc. VRM Public License 1.0 (https://vrm.dev/licenses/1.0/): redistribution and modification allowed, credit not required.
+- **Seed-san** (`public/assets/avatars/him.vrm`) by VirtualCast, Inc. VRM Public License 1.0 (https://vrm.dev/licenses/1.0/): credit required. Thank you, VirtualCast!

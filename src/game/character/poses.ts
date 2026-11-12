@@ -32,7 +32,7 @@ const R: Partial2 = {}
 const KEYS: Partial<Record<ClipName, Key[]>> = {
   kiss: [[0, R], [600, { lean: 0.25, head: { x: 0.15 }, armL: { x: 0.5, z: 0.3 }, armR: { x: 0.5, z: 0.3 } }], [1900, { lean: 0.25, head: { x: 0.15 }, armL: { x: 0.5, z: 0.3 }, armR: { x: 0.5, z: 0.3 } }], [2500, R]],
   'receive-kiss': [[0, R], [600, { head: { z: 0.25 }, armL: { x: -0.4, z: 0.5 }, armR: { x: -0.4, z: 0.5 } }], [1900, { head: { z: 0.25 }, armL: { x: -0.4, z: 0.5 }, armR: { x: -0.4, z: 0.5 } }], [2500, R]],
-  hug: [[0, R], [700, { lean: 0.15, armL: { x: -1.4, y: 0.6, z: 0.3 }, armR: { x: -1.4, y: -0.6, z: 0.3 } }], [2300, { lean: 0.15, head: { z: 0.15 }, armL: { x: -1.4, y: 0.6, z: 0.3 }, armR: { x: -1.4, y: -0.6, z: 0.3 } }], [3000, R]],
+  hug: [[0, R], [700, { lean: 0.15, armL: { x: -1.25, y: 0.3, z: 0.45 }, armR: { x: -1.25, y: -0.3, z: 0.45 } }], [2300, { lean: 0.15, head: { z: 0.15 }, armL: { x: -1.25, y: 0.3, z: 0.45 }, armR: { x: -1.25, y: -0.3, z: 0.45 } }], [3000, R]],
   highfive: [[0, R], [450, { armR: { x: -0.4, z: 2.6 } }], [900, { armR: { x: -0.6, z: 2.6 }, lean: 0.1 }], [1500, R]],
   comfort: [[0, R], [700, { armR: { x: -1.2, z: 0.5 }, head: { z: -0.2 } }], [1300, { armR: { x: -1.35, z: 0.5 }, head: { z: -0.2 } }], [1900, { armR: { x: -1.2, z: 0.5 }, head: { z: -0.2 } }], [2500, { armR: { x: -1.35, z: 0.5 }, head: { z: -0.2 } }], [3500, R]],
   'receive-comfort': [[0, R], [700, { head: { x: 0.35 }, lean: 0.1, armL: { x: -0.3 }, armR: { x: -0.3 } }], [2800, { head: { x: 0.3, z: 0.15 }, lean: 0.1, armL: { x: -0.3 }, armR: { x: -0.3 } }], [3500, R]],

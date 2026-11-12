@@ -13,7 +13,7 @@ export const INTERACTION_DURATION: Record<InteractionKind, number> = {
   wave: 1500,
 }
 
-const GAP: Record<Exclude<InteractionKind, 'wave'>, number> = { kiss: 0.55, hug: 0.55, comfort: 0.55, highfive: 0.8 }
+const GAP: Record<Exclude<InteractionKind, 'wave'>, number> = { kiss: 0.46, hug: 0.48, comfort: 0.52, highfive: 0.8 }
 const WAVE_MIN_GAP = 1.2
 
 export type Plan = { initiatorSpot: Vec2; partnerSpot: Vec2; initiatorFacing: number; partnerFacing: number }
