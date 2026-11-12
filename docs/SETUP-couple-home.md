@@ -50,3 +50,6 @@ Open your Sweet Paradise address on both iPhones, log in, and tap **Share → Ad
 **Keep it awake:** free Supabase projects pause after 7 days with nobody logging in. Playing most days prevents that; if it ever pauses, open the Supabase dashboard and click **Restore**.
 
 **Without Supabase** (testing only): `/?local=1&as=her` and `/?local=1&as=him` in two tabs of the same browser.
+
+### Partner's first login (0005)
+Run `supabase/migrations/0005_claim_home.sql`. After that, any account you create in Authentication → Users that has no profile yet joins the home on first login as the opposite role (your partner becomes the girl character automatically). Rename later with `update public.profiles set display_name = 'Name' where role = 'female';`

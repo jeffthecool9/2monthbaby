@@ -60,8 +60,14 @@ export async function loadMyProfile(c: SupabaseClient): Promise<Profile> {
   const id = auth.user.id
   const { data, error } = await queryProfiles(c, (q) => q.eq('id', id).limit(1))
   if (error) throw error
-  if (!data?.length) throw { code: 'PGRST116' }
-  return rowToProfile(data[0])
+  if (data?.length) return rowToProfile(data[0])
+  // First login of the partner's account: join the waiting home as the other role (migration 0005).
+  const claim = await c.rpc('claim_home')
+  if (claim.error) throw { code: 'PGRST116' }
+  const again = await queryProfiles(c, (q) => q.eq('id', id).limit(1))
+  if (again.error) throw again.error
+  if (!again.data?.length) throw { code: 'PGRST116' }
+  return rowToProfile(again.data[0])
 }
 
 export async function loadPartner(c: SupabaseClient, me: Profile): Promise<Profile | null> {
