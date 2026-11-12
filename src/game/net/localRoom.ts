@@ -56,20 +56,38 @@ export function createLocalRoom(houseId: string, opts: { heartbeatMs?: number; e
     }
   }
 
+  const connect = () => {
+    channel = new BroadcastChannel(`house:${houseId}`)
+    channel.onmessage = onWire
+    publish()
+    post({ k: 'hello' })
+    beat = setInterval(() => {
+      publish()
+      const now = Date.now()
+      let changed = false
+      for (const [id, p] of peers) if (now - p.seen > expireMs) changed = peers.delete(id) || changed
+      if (changed) emitPresence()
+    }, heartbeatMs)
+  }
+  const disconnect = () => {
+    sendPresence.cancel()
+    if (beat) clearInterval(beat)
+    beat = null
+    channel?.close()
+    channel = null
+  }
+
   return {
     async join(state) {
       me = { ...state }
-      channel = new BroadcastChannel(`house:${houseId}`)
-      channel.onmessage = onWire
-      publish()
-      post({ k: 'hello' })
-      beat = setInterval(() => {
-        publish()
-        const now = Date.now()
-        let changed = false
-        for (const [id, p] of peers) if (now - p.seen > expireMs) changed = peers.delete(id) || changed
-        if (changed) emitPresence()
-      }, heartbeatMs)
+      connect()
+    },
+    pause() {
+      disconnect()
+    },
+    async resume() {
+      if (!me || channel) return
+      connect()
     },
     updatePresence(patch) {
       if (!me) return
@@ -83,11 +101,8 @@ export function createLocalRoom(houseId: string, opts: { heartbeatMs?: number; e
     onPresence: pres.add,
     async leave() {
       if (!channel || !me) return
-      sendPresence.cancel()
-      if (beat) clearInterval(beat)
       post({ k: 'bye', userId: me.userId })
-      channel.close()
-      channel = null
+      disconnect()
       peers.clear()
     },
   }

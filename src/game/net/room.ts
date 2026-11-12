@@ -10,9 +10,19 @@ export interface Room {
   /** Called with everyone except me whenever that list changes. */
   onPresence(cb: (others: PresenceState[]) => void): () => void
   leave(): Promise<void>
+  /** Page hidden (phone locked / app switched): stop sending. */
+  pause(): void
+  /** Page visible again: reconnect and re-announce presence. */
+  resume(): Promise<void>
 }
 
 export const PRESENCE_MIN_INTERVAL = 250
+const RESUBSCRIBE_AFTER_MS = 10_000
+
+/** iOS drops sockets for backgrounded pages; after a long absence reconnect from scratch. */
+export function shouldResubscribe(hiddenAt: number, now: number): boolean {
+  return now - hiddenAt >= RESUBSCRIBE_AFTER_MS
+}
 
 /** Small listener set helper shared by Room implementations. */
 export function listeners<T>() {

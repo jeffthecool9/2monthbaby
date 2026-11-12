@@ -47,6 +47,7 @@ export type HudEvent =
   | { type: 'bubble'; userId: UserId; text: string }
   | { type: 'partner-online'; online: boolean; name: string }
   | { type: 'wardrobe' }
+  | { type: 'toast'; text: string }
 
 export type SimState = {
   me: Avatar

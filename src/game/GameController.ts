@@ -61,6 +61,28 @@ export class GameController {
     const onResize = () => bundle.engine.resize()
     window.addEventListener('resize', onResize)
     this.unsubs.push(() => window.removeEventListener('resize', onResize))
+
+    // iPhone: locking the phone or switching apps suspends the page. Stop rendering and
+    // reconnect on return so we reappear for each other without a reload.
+    const onVisibility = () => {
+      if (document.hidden) {
+        bundle.engine.stopRenderLoop()
+        this.room.pause()
+      } else {
+        void this.room.resume()
+        this.lastFrame = performance.now()
+        bundle.engine.stopRenderLoop()
+        bundle.engine.runRenderLoop(() => this.frame())
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    this.unsubs.push(() => document.removeEventListener('visibilitychange', onVisibility))
+
+    // iOS can drop the WebGL context under memory pressure; Babylon rebuilds it, we redraw faces.
+    bundle.engine.onContextLostObservable.add(() => this.emitHud({ type: 'toast', text: 'Reconnecting…' }))
+    bundle.engine.onContextRestoredObservable.add(() => {
+      for (const entry of this.chibis.values()) entry.expr = ''
+    })
   }
 
   onHud(cb: (e: HudEvent) => void): () => void {

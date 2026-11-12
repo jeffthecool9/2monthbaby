@@ -1,7 +1,7 @@
 // Room over Supabase Realtime: presence for who is where, broadcast for moves, interactions and chat.
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
 import { parseMsg, parsePresence, type NetMsg, type PresenceState } from './protocol'
-import { PRESENCE_MIN_INTERVAL, listeners, throttle, type Room } from './room'
+import { PRESENCE_MIN_INTERVAL, listeners, shouldResubscribe, throttle, type Room } from './room'
 
 export function createSupabaseRoom(client: SupabaseClient, houseId: string): Room {
   const msgs = listeners<NetMsg>()
@@ -9,6 +9,7 @@ export function createSupabaseRoom(client: SupabaseClient, houseId: string): Roo
   let channel: RealtimeChannel | null = null
   let me: PresenceState | null = null
   let subscribed = false
+  let pausedAt = 0
 
   const track = () => {
     if (channel && me && subscribed) void channel.track(me)
@@ -74,6 +75,19 @@ export function createSupabaseRoom(client: SupabaseClient, houseId: string): Roo
     onPresence: pres.add,
     async leave() {
       await unsubscribe()
+    },
+    pause() {
+      sendPresence.cancel()
+      pausedAt = Date.now()
+    },
+    async resume() {
+      if (!me) return
+      if (subscribed && !shouldResubscribe(pausedAt, Date.now())) {
+        track()
+        return
+      }
+      await unsubscribe()
+      await subscribe()
     },
   }
 }

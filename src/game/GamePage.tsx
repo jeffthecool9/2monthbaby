@@ -10,7 +10,7 @@ import type { PresenceState } from './net/protocol'
 import type { Room } from './net/room'
 import type { Identity } from './sim/sim'
 import { SPAWN } from './world/layout'
-import { Hud } from './ui/Hud'
+import { Hud, liteGraphics } from './ui/Hud'
 import { LoginScreen } from './ui/LoginScreen'
 import type { LogLine } from './ui/ChatLog'
 import { BirthdayBanner } from './ui/BirthdayBanner'
@@ -47,7 +47,9 @@ function Game({ setup }: { setup: Setup }) {
   useEffect(() => {
     const start = { x: SPAWN.x + (setup.me.role === 'female' ? -0.6 : 0.6), z: SPAWN.z }
     const presence: PresenceState = { ...setup.me, pos: start, facing: Math.PI, activity: 'idle' }
-    const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName })
+    const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName, lite: liteGraphics() })
+    // No rubber-band scrolling behind the game on iOS.
+    document.body.style.overscrollBehavior = 'none'
     void g.start().then(() => setGame(g))
     if (import.meta.env.DEV) (window as unknown as { __game: GameController }).__game = g
     return () => {

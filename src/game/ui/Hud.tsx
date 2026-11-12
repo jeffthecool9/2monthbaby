@@ -25,6 +25,46 @@ const ACTION_ITEM: Record<FurnitureAction, WheelItem> = {
 
 type Wheel = { at: { x: number; y: number }; items: WheelItem[]; furniture?: FurnitureId }
 
+const LITE_KEY = 'couple-home-lite'
+
+export function liteGraphics(): boolean {
+  try {
+    return localStorage.getItem(LITE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** ⚙️ menu with the lite-graphics switch for older phones (reloads to apply). */
+function SettingsButton() {
+  const [open, setOpen] = useState(false)
+  const lite = liteGraphics()
+  const toggle = () => {
+    try {
+      localStorage.setItem(LITE_KEY, lite ? '0' : '1')
+    } catch {
+      return
+    }
+    location.reload()
+  }
+  return (
+    <div className="fixed right-3 z-30" style={{ top: 'calc(env(safe-area-inset-top) + 10px)' }}>
+      <button type="button" aria-label="Settings" className="h-10 w-10 rounded-full bg-white/80 text-lg shadow" onClick={() => setOpen((v) => !v)}>⚙️</button>
+      {open && (
+        <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white/95 p-3 text-sm text-[#4a2338] shadow-xl">
+          <button type="button" className="flex w-full items-center justify-between rounded-xl px-2 py-2 active:bg-[#ffe1ec]" onClick={toggle}>
+            <span>Lite graphics</span>
+            <span className={`h-6 w-11 rounded-full p-0.5 transition ${lite ? 'bg-[#ff6f9c]' : 'bg-[#e8d5dd]'}`}>
+              <span className={`block h-5 w-5 rounded-full bg-white shadow transition ${lite ? 'translate-x-5' : ''}`} />
+            </span>
+          </button>
+          <p className="px-2 pt-1 text-xs text-[#b07a92]">Smoother on older phones. Reloads the page.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
   controller: GameController | null
   onLookChange?: (look: CharacterLook) => void
@@ -52,6 +92,7 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
         if (f?.actions.length) setWheel({ at: e.screen, items: f.actions.map((a) => ACTION_ITEM[a]), furniture: e.id })
       } else if (e.type === 'wardrobe') setWardrobe(controller.state.me.look)
       else if (e.type === 'partner-online') setToast(e.online ? `${e.name} is home 🏠` : `${e.name} went to sleep 😴`)
+      else if (e.type === 'toast') setToast(e.text)
     })
   }, [controller])
 
@@ -70,6 +111,7 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
   return (
     <>
       <Bubbles controller={controller} />
+      <SettingsButton />
       <ActionWheel at={wheel?.at ?? null} items={wheel?.items ?? []} onPick={pick} onClose={() => setWheel(null)} />
       {extra}
       <ChatBar
