@@ -1,54 +1,28 @@
 import { useEffect, useRef } from 'react'
-import { Vector3 } from '@babylonjs/core'
-import { createScene } from './engine/createScene'
-import { buildApartment } from './engine/apartment'
-import { Chibi } from './engine/chibi'
+import { GameController } from './GameController'
 import { defaultLook } from './character/look'
-import { sampleClip, type ClipName } from './character/poses'
-import type { EmoteKind } from './types'
+import { createLocalRoom } from './net/localRoom'
+import type { PresenceState } from './net/protocol'
+import type { Identity } from './sim/sim'
+import { SPAWN } from './world/layout'
 
-// Temporary scene preview (Task 7). Replaced by the full game page in later tasks.
+const LOCAL_PEOPLE: Record<'her' | 'him', Identity> = {
+  her: { userId: 'local-her', name: 'Her', role: 'female', look: defaultLook('female') },
+  him: { userId: 'local-him', name: 'Him', role: 'male', look: defaultLook('male') },
+}
+
 export default function GamePage() {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
-    const canvas = ref.current!
-    const { engine, scene, camera, shadows } = createScene(canvas)
-    let disposed = false
     const params = new URLSearchParams(location.search)
-    const tx = Number(params.get('x') ?? 4.5), tz = Number(params.get('z') ?? 4.2)
-    if (params.has('a')) camera.alpha = Number(params.get('a'))
-    if (params.has('b')) camera.beta = Number(params.get('b'))
-    if (params.has('r')) {
-      camera.lowerRadiusLimit = 1
-      camera.upperBetaLimit = 1.5
-      camera.radius = Number(params.get('r'))
-    }
-    camera.target = new Vector3(tx, 0.6, tz)
-    buildApartment(scene, shadows).then((apt) => {
-      if (disposed) return
-      if (params.has('chibi')) {
-        const clip = (params.get('clip') ?? 'idle') as ClipName
-        const t = Number(params.get('t') ?? 750)
-        const her = new Chibi(scene, defaultLook('female'), shadows)
-        const him = new Chibi(scene, defaultLook('male'), shadows)
-        const front = params.has('front')
-        her.setPosition({ x: tx - (front ? 0.4 : 0.28), z: tz }, front ? Math.PI : Math.PI / 2)
-        him.setPosition({ x: tx + (front ? 0.4 : 0.28), z: tz }, front ? Math.PI : -Math.PI / 2)
-        her.setPose(sampleClip(clip, t))
-        him.setPose(sampleClip(clip === 'kiss' ? 'receive-kiss' : clip, t))
-        if (params.has('expr')) her.setExpression(params.get('expr') as EmoteKind)
-      }
-      scene.onBeforeRenderObservable.add(() => apt.updateCutaway({ x: camera.position.x, z: camera.position.z }, { x: camera.target.x, z: camera.target.z }))
-      engine.runRenderLoop(() => scene.render())
-      ;(window as unknown as { __fps: () => number }).__fps = () => engine.getFps()
-    })
-    const onResize = () => engine.resize()
-    window.addEventListener('resize', onResize)
-    return () => {
-      disposed = true
-      window.removeEventListener('resize', onResize)
-      engine.dispose()
-    }
+    const as = params.get('as') === 'him' ? 'him' : 'her'
+    const me = LOCAL_PEOPLE[as], partner = LOCAL_PEOPLE[as === 'her' ? 'him' : 'her']
+    const start = { x: SPAWN.x + (as === 'her' ? -0.6 : 0.6), z: SPAWN.z }
+    const presence: PresenceState = { ...me, pos: start, facing: Math.PI, activity: 'idle' }
+    const game = new GameController(ref.current!, createLocalRoom('local-house'), presence, partner)
+    void game.start()
+    if (import.meta.env.DEV) (window as unknown as { __game: GameController }).__game = game
+    return () => game.dispose()
   }, [])
   return <canvas ref={ref} style={{ width: '100vw', height: '100dvh', display: 'block', touchAction: 'none' }} />
 }

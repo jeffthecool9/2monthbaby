@@ -71,6 +71,6 @@ export const FURNITURE: Furniture[] = [
   { id: 'balconyChairB', room: 'balcony', pos: { x: 12.0, z: 1.0 }, rotY: Math.PI, size: { x: 0.55, z: 0.55 }, actions: ['sit'], usePoint: { x: 12.0, z: 1.7 } },
 ]
 
-/** [female side, male side] of the bed. */
-export const BED_SLEEP_SPOTS: [Vec2, Vec2] = [{ x: 5.8, z: 0.9 }, { x: 6.6, z: 0.9 }]
+/** [female side, male side] of the bed: where the feet go, so heads rest on the pillows. */
+export const BED_SLEEP_SPOTS: [Vec2, Vec2] = [{ x: 5.8, z: 1.55 }, { x: 6.6, z: 1.55 }]
 export const SPAWN: Vec2 = { x: 4.5, z: 4.2 }

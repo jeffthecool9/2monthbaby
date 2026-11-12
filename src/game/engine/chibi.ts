@@ -63,8 +63,10 @@ export class Chibi {
   }
 
   setPose(p: Pose) {
-    this.lean.position.y = p.rootY + (p.lean > 1 ? 0.12 : 0)
-    this.lean.rotation.x = p.lean
+    // Lying down: roll onto the back rather than face-first.
+    const lying = p.lean > 1
+    this.lean.position.y = p.rootY + (lying ? 0.12 : 0)
+    this.lean.rotation.x = lying ? -p.lean : p.lean
     this.torso.rotation.set(p.body.x, p.body.y, p.body.z)
     this.head.rotation.set(p.head.x, p.head.y, p.head.z)
     this.armR.rotation.set(p.armR.x, p.armR.y, p.armR.z)
@@ -78,8 +80,8 @@ export class Chibi {
     this.redrawFace()
   }
 
-  setPosition(p: Vec2, facing: number) {
-    this.root.position.set(p.x, 0, p.z)
+  setPosition(p: Vec2, facing: number, y = 0) {
+    this.root.position.set(p.x, y, p.z)
     this.root.rotation.y = facing
   }
 
