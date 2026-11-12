@@ -13,7 +13,12 @@ export function LoginScreen({ client }: { client: SupabaseClient }) {
     setError(null)
     const { error } = await client.auth.signInWithPassword({ email: email.trim(), password })
     setBusy(false)
-    if (error) setError('That email or password doesn’t match. Try again 💗')
+    if (error) {
+      const m = error.message.toLowerCase()
+      if (m.includes('not confirmed')) setError('This account isn’t confirmed yet. In Supabase → Authentication → Users, confirm it (or re-create it with “Auto Confirm User” ticked).')
+      else if (m.includes('invalid login')) setError('That email or password doesn’t match. Try again 💗')
+      else setError(`Couldn’t log in: ${error.message}`)
+    }
   }
 
   return (
