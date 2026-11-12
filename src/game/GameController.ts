@@ -10,9 +10,9 @@ import { addBirthdayDecor } from './three/decor'
 import { classifyGesture, type PointerSample } from './input/gesture'
 import { cleanChat, type PresenceState } from './net/protocol'
 import type { Room } from './net/room'
-import { createSim, step, type Avatar as SimAvatar, type HudEvent, type Identity, type SimEvent, type SimState } from './sim/sim'
+import { PAIR_RANGE, createSim, step, type Avatar as SimAvatar, type HudEvent, type Identity, type SimEvent, type SimState } from './sim/sim'
 import type { FurnitureAction, FurnitureId } from './world/layout'
-import type { EmoteKind, InteractionKind, UserId } from './types'
+import type { ActionKind, EmoteKind, InteractionKind, UserId } from './types'
 
 const BLEND_MS = 260
 
@@ -161,6 +161,17 @@ export class GameController {
 
   interact(kind: InteractionKind) {
     this.dispatch({ type: 'interact', kind, id: newId() })
+  }
+
+  /** Action wheel: together if my partner is close, otherwise on my own. */
+  action(kind: ActionKind) {
+    this.dispatch({ type: 'action', kind, id: newId() })
+  }
+
+  /** Is my partner close enough for actions to become couple interactions? */
+  partnerNear(): boolean {
+    const p = this.sim.partner, me = this.sim.me
+    return !!p?.online && Math.hypot(p.pos.x - me.pos.x, p.pos.z - me.pos.z) <= PAIR_RANGE
   }
 
   acceptRequest(id: string) {

@@ -6,10 +6,13 @@ import { CLIP_DURATION, type ClipName } from '../character/poses'
 import type { NetMsg, PresenceState } from '../net/protocol'
 import { BED_SLEEP_SPOTS, FURNITURE, type FurnitureAction, type FurnitureId } from '../world/layout'
 import { NavGrid } from '../world/navgrid'
-import type { Activity, EmoteKind, InteractionKind, Role, UserId, Vec2 } from '../types'
+import type { ActionKind, Activity, EmoteKind, InteractionKind, Role, SoloClip, UserId, Vec2 } from '../types'
 import { INTERACTION_DURATION, facingTo, needsRequest, planInteraction, resolveCrossing, type InteractMsg, type Plan } from './interactions'
 
 export const WALK_SPEED = 1.6 // m/s
+/** Within this distance an action becomes a real couple interaction. */
+export const PAIR_RANGE = 1.8
+const SOLO_CLIP: Record<ActionKind, SoloClip> = { kiss: 'blow-kiss', hug: 'hug', highfive: 'highfive', comfort: 'comfort', wave: 'wave', dance: 'dance' }
 const APPROACH_TIMEOUT = 4000
 const SNAP_DISTANCE = 0.6
 
@@ -72,6 +75,7 @@ export type SimEvent =
   | { type: 'tap-partner'; screen: { x: number; y: number } }
   | { type: 'face'; facing: number }
   | { type: 'set-avatar'; avatar: string }
+  | { type: 'action'; kind: ActionKind; id: string }
   | { type: 'accept'; id: string }
   | { type: 'use-furniture'; id: FurnitureId; action: FurnitureAction }
   | { type: 'say'; text: string; id: string }
@@ -265,6 +269,9 @@ function onNet(s: SimState, msg: NetMsg, now: number): SimState {
       return { ...s, partner: emoteOn(partner, msg.emote, now) }
     case 'look':
       return { ...s, partner: { ...partner, look: msg.look } }
+    case 'act':
+      if (s.interaction || partner.activity === 'walking') return s
+      return { ...s, partner: { ...partner, activity: 'idle', clip: msg.clip, clipStart: now } }
   }
 }
 
@@ -315,6 +322,16 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       }
       const msg: InteractMsg = { t: 'interact', id: e.id, from: s.me.userId, to: p.userId, kind: e.kind, at: now }
       return startInteraction({ ...s, outbox: [...s.outbox, msg] }, msg, now)
+    }
+    case 'action': {
+      if (s.interaction || s.me.activity === 'walking') return s
+      const p = s.partner
+      const couple = e.kind !== 'dance'
+      // Someone right next to me → the real thing, together. Otherwise I do it on my own.
+      if (couple && p?.online && dist(p.pos, s.me.pos) <= PAIR_RANGE) return step(s, { type: 'interact', kind: e.kind as InteractionKind, id: e.id }, now)
+      const clip = SOLO_CLIP[e.kind]
+      const me: Avatar = { ...s.me, activity: 'idle', furniture: undefined, clip, clipStart: now }
+      return { ...s, me, outbox: [...s.outbox, { t: 'act', from: s.me.userId, clip, at: now }] }
     }
     case 'set-avatar':
       return { ...s, me: { ...s.me, avatar: e.avatar } }

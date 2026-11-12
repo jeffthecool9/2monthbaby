@@ -1,22 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import type { GameController } from '../GameController'
 import type { CharacterLook } from '../character/look'
 import { FURNITURE, type FurnitureAction, type FurnitureId } from '../world/layout'
-import type { InteractionKind } from '../types'
+import type { ActionKind } from '../types'
+import { RadialMenu } from './RadialMenu'
 import { ActionWheel, type WheelItem } from './ActionWheel'
 import { Bubbles } from './Bubbles'
 import { ChatBar } from './ChatBar'
 import { ChatLog, type LogLine } from './ChatLog'
 import { WardrobePanel } from './WardrobePanel'
 
-const PARTNER_ITEMS: WheelItem[] = [
-  { id: 'kiss', label: 'Kiss', emoji: '😘' },
-  { id: 'hug', label: 'Hug', emoji: '🤗' },
-  { id: 'highfive', label: 'High five', emoji: '✋' },
-  { id: 'comfort', label: 'Comfort', emoji: '🫂' },
-  { id: 'wave', label: 'Wave', emoji: '👋' },
-]
 const ACTION_ITEM: Record<FurnitureAction, WheelItem> = {
   sit: { id: 'sit', label: 'Sit', emoji: '🪑' },
   sleep: { id: 'sleep', label: 'Sleep', emoji: '😴' },
@@ -81,6 +75,34 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history =
   const [toast, setToast] = useState<string | null>(null)
   const [log, setLog] = useState<LogLine[]>(history)
   const [logOpen, setLogOpen] = useState(false)
+  // GTA-style action wheel: hold the 💞 button and slide, or tap to open and tap.
+  const [radial, setRadial] = useState(false)
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null)
+  const hot = useRef<ActionKind | null>(null)
+  const pressStart = useRef(0)
+  const onHot = useCallback((id: ActionKind | null) => {
+    hot.current = id
+  }, [])
+
+  useEffect(() => {
+    if (!drag) return
+    const move = (e: PointerEvent) => setDrag({ x: e.clientX, y: e.clientY })
+    const up = () => {
+      const held = Date.now() - pressStart.current > 250
+      if (held && hot.current && controller) {
+        controller.action(hot.current)
+        setRadial(false)
+      }
+      // A quick tap leaves the wheel open for tapping an action.
+      setDrag(null)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up, { once: true })
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+  }, [drag !== null, controller]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => setLog(history), [history])
 
@@ -88,7 +110,7 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history =
     if (!controller) return
     return controller.onHud((e) => {
       if (e.type === 'bubble') setLog((l) => [...l.slice(-199), { id: `${Date.now()}-${l.length}`, sender: e.userId, text: e.text }])
-      else if (e.type === 'wheel-partner') setWheel({ at: e.screen, items: PARTNER_ITEMS })
+      else if (e.type === 'wheel-partner') setRadial(true)
       else if (e.type === 'wheel-furniture') {
         const f = FURNITURE.find((x) => x.id === e.id)
         if (f?.actions.length) setWheel({ at: e.screen, items: f.actions.map((a) => ACTION_ITEM[a]), furniture: e.id })
@@ -110,7 +132,6 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history =
   const pick = (id: string) => {
     if (!controller || !wheel) return
     if (wheel.furniture) controller.useFurniture(wheel.furniture, id as FurnitureAction)
-    else controller.interact(id as InteractionKind)
   }
 
   return (
@@ -132,6 +153,34 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history =
         </button>
       )}
       <ActionWheel at={wheel?.at ?? null} items={wheel?.items ?? []} onPick={pick} onClose={() => setWheel(null)} />
+      <RadialMenu
+        open={radial}
+        hint={controller?.partnerNear() ? 'together 💞' : 'on my own'}
+        pointer={drag}
+        onHot={onHot}
+        onPick={(id) => controller?.action(id)}
+        onClose={() => setRadial(false)}
+      />
+      {!wardrobe && controller && (
+        <motion.button
+          type="button"
+          aria-label="Actions"
+          className="fixed right-3 z-30 flex h-16 w-16 items-center justify-center rounded-full text-3xl text-white shadow-[0_8px_24px_rgba(255,95,147,0.55)]"
+          style={{ bottom: 'calc(max(10px, env(safe-area-inset-bottom)) + 112px)', background: 'radial-gradient(circle at 35% 30%, #ffb3cd, #ff5f93)', touchAction: 'none' }}
+          whileTap={{ scale: 0.9 }}
+          animate={{ boxShadow: ['0 8px 24px rgba(255,95,147,0.45)', '0 8px 32px rgba(255,95,147,0.8)', '0 8px 24px rgba(255,95,147,0.45)'] }}
+          transition={{ duration: 2.4, repeat: Infinity }}
+          onPointerDown={(e) => {
+            e.preventDefault()
+            pressStart.current = Date.now()
+            hot.current = null
+            setRadial(true)
+            setDrag({ x: e.clientX, y: e.clientY })
+          }}
+        >
+          💞
+        </motion.button>
+      )}
       {extra}
       <ChatBar
         onSend={(t) => {

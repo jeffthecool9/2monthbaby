@@ -35,7 +35,11 @@ const upper = new Quaternion()
 function elbow(side: 1 | -1, p: { x: number }, upperArm: Quat): Quat {
   upper.set(upperArm[0], upperArm[1], upperArm[2], upperArm[3]).invert()
   const localUp = UP.clone().applyQuaternion(upper)
-  return tuple(q.setFromAxisAngle(localUp, -side * Math.max(0, -p.x - 0.3) * 0.55))
+  const curl = qy.setFromAxisAngle(localUp, -side * Math.max(0, -p.x - 0.3) * 0.55)
+  // Reaching up past the shoulder (blowing a kiss, hands to face): fold the forearm back toward the face.
+  const fold = Math.min(2.3, Math.max(0, (-p.x - 1.5) * 4.5))
+  qz.setFromAxisAngle({ x: 0, y: 1, z: 0 } as never, side * fold)
+  return tuple(q.copy(curl).multiply(qz))
 }
 
 function euler(e: { x: number; y: number; z: number }, scale = 1): Quat {

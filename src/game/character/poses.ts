@@ -6,7 +6,7 @@ import { INTERACTION_DURATION } from '../sim/interactions'
 
 export type Euler = { x: number; y: number; z: number }
 export type Pose = { rootY: number; lean: number; head: Euler; body: Euler; armL: Euler; armR: Euler; legL: Euler; legR: Euler }
-export type ClipName = 'idle' | 'walk' | 'sit' | 'sleep' | InteractionKind | 'receive-kiss' | 'receive-comfort' | EmoteKind
+export type ClipName = 'idle' | 'walk' | 'sit' | 'sleep' | InteractionKind | 'receive-kiss' | 'receive-comfort' | EmoteKind | 'blow-kiss' | 'dance'
 
 const e = (x = 0, y = 0, z = 0): Euler => ({ x, y, z })
 export const REST_POSE: Pose = { rootY: 0, lean: 0, head: e(), body: e(), armL: e(0, 0, 0.12), armR: e(0, 0, 0.12), legL: e(), legR: e() }
@@ -20,16 +20,20 @@ export const CLIP_DURATION: Record<ClipName, number> = {
   'receive-kiss': INTERACTION_DURATION.kiss,
   'receive-comfort': INTERACTION_DURATION.comfort,
   happy: 1500, shy: 2000, angry: 1500, crying: 2500, love: 2000, sleepy: 2500,
+  'blow-kiss': 2000, dance: 4000,
 }
 
 export const CLIP_LOOPS: Record<ClipName, boolean> = {
   idle: true, walk: true, sit: true, sleep: true,
   kiss: false, hug: false, highfive: false, comfort: false, wave: false, 'receive-kiss': false, 'receive-comfort': false,
   happy: false, shy: false, angry: false, crying: false, love: false, sleepy: false,
+  'blow-kiss': false, dance: false,
 }
 
 const R: Partial2 = {}
 const KEYS: Partial<Record<ClipName, Key[]>> = {
+  'blow-kiss': [[0, R], [500, { armR: { x: -1.8, y: -0.45, z: 0.35 }, head: { x: 0.1 } }], [900, { armR: { x: -1.82, y: -0.45, z: 0.35 }, head: { x: 0.15 } }], [1300, { armR: { x: -1.3, y: 0.2, z: 1.2 }, lean: 0.08, head: { x: -0.1 } }], [2000, R]],
+  dance: [[0, R], [450, { rootY: 0.04, lean: 0.05, body: { y: -0.35, z: -0.08 }, head: { z: 0.12 }, armL: { z: 0.9, x: -0.3 }, armR: { z: 1.9, x: -0.3 }, legL: { x: 0.1 }, legR: { x: -0.25 } }], [900, { rootY: 0, lean: 0.05, body: { y: 0.35, z: 0.08 }, head: { z: -0.12 }, armL: { z: 1.9, x: -0.3 }, armR: { z: 0.9, x: -0.3 }, legL: { x: -0.25 }, legR: { x: 0.1 } }], [1350, { rootY: 0.04, lean: 0.05, body: { y: -0.35, z: -0.08 }, head: { z: 0.12 }, armL: { z: 0.9, x: -0.3 }, armR: { z: 1.9, x: -0.3 }, legL: { x: 0.1 }, legR: { x: -0.25 } }], [1800, { rootY: 0, lean: 0.05, body: { y: 0.35, z: 0.08 }, head: { z: -0.12 }, armL: { z: 1.9, x: -0.3 }, armR: { z: 0.9, x: -0.3 }, legL: { x: -0.25 }, legR: { x: 0.1 } }], [2250, { rootY: 0.04, lean: 0.05, body: { y: -0.35, z: -0.08 }, head: { z: 0.12 }, armL: { z: 0.9, x: -0.3 }, armR: { z: 1.9, x: -0.3 }, legL: { x: 0.1 }, legR: { x: -0.25 } }], [2700, { rootY: 0, lean: 0.05, body: { y: 0.35, z: 0.08 }, head: { z: -0.12 }, armL: { z: 1.9, x: -0.3 }, armR: { z: 0.9, x: -0.3 }, legL: { x: -0.25 }, legR: { x: 0.1 } }], [3150, { rootY: 0.04, lean: 0.05, body: { y: -0.35, z: -0.08 }, head: { z: 0.12 }, armL: { z: 0.9, x: -0.3 }, armR: { z: 1.9, x: -0.3 }, legL: { x: 0.1 }, legR: { x: -0.25 } }], [4000, R]],
   kiss: [[0, R], [600, { lean: 0.25, head: { x: 0.15 }, armL: { x: 0.5, z: 0.3 }, armR: { x: 0.5, z: 0.3 } }], [1900, { lean: 0.25, head: { x: 0.15 }, armL: { x: 0.5, z: 0.3 }, armR: { x: 0.5, z: 0.3 } }], [2500, R]],
   'receive-kiss': [[0, R], [600, { head: { z: 0.25 }, armL: { x: -0.4, z: 0.5 }, armR: { x: -0.4, z: 0.5 } }], [1900, { head: { z: 0.25 }, armL: { x: -0.4, z: 0.5 }, armR: { x: -0.4, z: 0.5 } }], [2500, R]],
   hug: [[0, R], [700, { lean: 0.15, armL: { x: -1.25, y: 0.3, z: 0.45 }, armR: { x: -1.25, y: -0.3, z: 0.45 } }], [2300, { lean: 0.15, head: { z: 0.15 }, armL: { x: -1.25, y: 0.3, z: 0.45 }, armR: { x: -1.25, y: -0.3, z: 0.45 } }], [3000, R]],

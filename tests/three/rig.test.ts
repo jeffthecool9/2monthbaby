@@ -43,6 +43,17 @@ describe('poseToBones', () => {
     expect(DOWN.clone().applyQuaternion(knee).y).toBeLessThan(-0.8)
   })
 
+  test('blowing a kiss brings the right hand up in front of the face', () => {
+    const b = poseToBones(sampleClip('blow-kiss', 800))
+    const up = new Quaternion(...b.rightUpperArm!)
+    const fore = up.clone().multiply(new Quaternion(...b.rightLowerArm!))
+    // Shoulder at origin; upper arm and forearm ~0.25 m each.
+    const hand = RIGHT.clone().applyQuaternion(up).multiplyScalar(0.25).add(RIGHT.clone().applyQuaternion(fore).multiplyScalar(0.25))
+    expect(hand.y).toBeGreaterThan(0.05) // above the shoulder, near the mouth
+    expect(hand.z).toBeGreaterThan(0.1) // in front of the body
+    expect(hand.x).toBeGreaterThan(-0.15) // pulled in toward the face, not out to the side
+  })
+
   test('every rotation is a unit quaternion', () => {
     for (const q of Object.values(poseToBones(sampleClip('highfive', 700)))) {
       expect(Math.hypot(...q!)).toBeCloseTo(1, 5)

@@ -1,6 +1,6 @@
 import { LOOK_OPTIONS, type CharacterLook } from '../character/look'
 import type { FurnitureId } from '../world/layout'
-import type { Activity, EmoteKind, InteractionKind, Role, UserId, Vec2 } from '../types'
+import type { Activity, EmoteKind, InteractionKind, Role, SoloClip, UserId, Vec2 } from '../types'
 
 export type PresenceState = {
   userId: UserId
@@ -24,6 +24,7 @@ export type NetMsg =
   | { t: 'chat'; id: string; from: UserId; text: string; at: number }
   | { t: 'emote'; from: UserId; emote: EmoteKind; at: number }
   | { t: 'look'; from: UserId; look: CharacterLook }
+  | { t: 'act'; from: UserId; clip: SoloClip; at: number }
 
 export const QUICK_MESSAGES = ['Hello 👋', 'Byebye 👋', 'Kiss 😘', 'Miss you 🥺', 'Good night 🌙', 'Hungry 🍜', 'Love you ❤️']
 export const MAX_CHAT = 200
@@ -31,6 +32,7 @@ const MAX_PATH = 400
 
 export const INTERACTION_KINDS: readonly InteractionKind[] = ['kiss', 'hug', 'highfive', 'comfort', 'wave']
 export const EMOTE_KINDS: readonly EmoteKind[] = ['happy', 'shy', 'angry', 'crying', 'love', 'sleepy']
+export const SOLO_CLIPS: readonly SoloClip[] = ['blow-kiss', 'hug', 'highfive', 'comfort', 'wave', 'dance']
 
 export function cleanChat(s: string): string | null {
   const t = s.trim()
@@ -92,6 +94,8 @@ export function parseMsg(x: unknown): NetMsg | null {
         : null
     case 'look':
       return isStr(m.from) && isValidLook(m.look) ? { t: 'look', from: m.from, look: { ...m.look } } : null
+    case 'act':
+      return isStr(m.from) && isNum(m.at) && SOLO_CLIPS.includes(m.clip as SoloClip) ? { t: 'act', from: m.from, clip: m.clip as SoloClip, at: m.at } : null
     default:
       return null
   }
