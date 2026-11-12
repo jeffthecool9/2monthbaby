@@ -5,7 +5,10 @@ import type { CharacterLook } from '../character/look'
 import { FURNITURE, type FurnitureAction, type FurnitureId } from '../world/layout'
 import type { ActionKind } from '../types'
 import { RadialMenu } from './RadialMenu'
+import { ActivityScreen } from './Activity'
+import type { ActivityId } from '../play/minigame'
 import { CoinPill, Games } from './Games'
+import { Shop } from './Shop'
 import { MISSIONS, type Wallet } from '../play/economy'
 import { ActionWheel, type WheelItem } from './ActionWheel'
 import { Bubbles } from './Bubbles'
@@ -17,6 +20,7 @@ const ACTION_ITEM: Record<FurnitureAction, WheelItem> = {
   sit: { id: 'sit', label: 'Sit', emoji: '🪑' },
   sleep: { id: 'sleep', label: 'Sleep', emoji: '😴' },
   wardrobe: { id: 'wardrobe', label: 'Change look', emoji: '👗' },
+  bathe: { id: 'bathe', label: 'Bubble bath', emoji: '🛁' },
 }
 
 type Wheel = { at: { x: number; y: number }; items: WheelItem[]; furniture?: FurnitureId }
@@ -61,13 +65,15 @@ function SettingsButton() {
   )
 }
 
-export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, wallet = null, lastGain = null, history = [], extra }: {
+export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, onSpend, wallet = null, lastGain = null, history = [], extra }: {
   controller: GameController | null
   onLookChange?: (look: CharacterLook) => void
   /** Upload a VRoid .vrm as my character (only when connected to Supabase). */
   onUploadAvatar?: (file: File) => Promise<void>
   /** Coins earned (missions, affection, games). */
   onEarn?: (amount: number, reason: string) => void
+  /** Pay coins in the shop; resolves false when I can't afford it. */
+  onSpend?: (amount: number, reason: string) => Promise<boolean>
   wallet?: Wallet | null
   lastGain?: { amount: number; key: number } | null
   /** Called with each chat message I send (after cleaning), e.g. to save it. */
@@ -81,6 +87,15 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, w
   const [toast, setToast] = useState<string | null>(null)
   const [log, setLog] = useState<LogLine[]>(history)
   const [logOpen, setLogOpen] = useState(false)
+  // First-person activity (cooking, bath, TV…) and whether we're watching it in 3D instead.
+  const [activity, setActivity] = useState<{ activity: ActivityId; mission?: string } | null>(null)
+  const [watching, setWatching] = useState(false)
+  useEffect(() => {
+    if (!activity || !controller) return
+    // The sim can end it underneath us (walked away, finished by timer): close the screen then.
+    const t = setInterval(() => !controller.activity && setActivity(null), 300)
+    return () => clearInterval(t)
+  }, [activity, controller])
   const onEarnRef = useRef(onEarn)
   onEarnRef.current = onEarn
   const earn = useCallback((amount: number, reason: string) => onEarnRef.current?.(amount, reason), [])
@@ -132,6 +147,7 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, w
       else if (e.type === 'partner-online') setToast(e.online ? `${e.name} is home 🏠` : `${e.name} went to sleep 😴`)
       else if (e.type === 'toast') setToast(e.text)
       else if (e.type === 'earn') onEarnRef.current?.(e.amount, e.reason)
+      else if (e.type === 'activity') setActivity({ activity: e.activity, mission: e.mission })
     })
   }, [controller])
 
@@ -150,10 +166,27 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, w
   return (
     <>
       <Bubbles controller={controller} />
-      <SettingsButton />
-      <CoinPill wallet={wallet} lastGain={lastGain} />
-      <Games controller={controller} onEarn={earn} hidden={!!wardrobe} />
-      {!wardrobe && controller && (
+      {!activity && <SettingsButton />}
+      {!activity && <CoinPill wallet={wallet} lastGain={lastGain} />}
+      <Games controller={controller} onEarn={earn} hidden={!!wardrobe || !!activity} />
+      <Shop controller={controller} wallet={wallet} onSpend={onSpend ?? (async () => false)} onRefund={earn} hidden={!!wardrobe || !!activity} />
+      <AnimatePresence>
+        {activity && controller && (
+          <ActivityScreen
+            key={`${activity.activity}-${activity.mission ?? ''}`}
+            controller={controller}
+            activity={activity.activity}
+            mission={activity.mission}
+            watching={watching}
+            onWatch={(w) => {
+              setWatching(w)
+              controller.setView(w ? 'third' : 'first')
+            }}
+            onClose={() => setActivity(null)}
+          />
+        )}
+      </AnimatePresence>
+      {!wardrobe && !activity && controller && (
         <button
           type="button"
           aria-label="My character"
@@ -176,7 +209,7 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, w
         onPick={(id) => controller?.action(id)}
         onClose={() => setRadial(false)}
       />
-      {!wardrobe && controller && (
+      {!wardrobe && !activity && controller && (
         <motion.button
           type="button"
           aria-label="Actions"
@@ -197,14 +230,14 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, w
         </motion.button>
       )}
       {extra}
-      <ChatBar
+      {!activity && <ChatBar
         onSend={(t) => {
           const sent = controller?.say(t)
           if (sent) onSay?.(sent)
         }}
         onEmote={(e) => controller?.emote(e)}
         onToggleLog={() => setLogOpen((v) => !v)}
-      />
+      />}
       <AnimatePresence>
         {logOpen && controller && (
           <ChatLog

@@ -25,7 +25,12 @@ function writeLocal(userId: string, w: Wallet) {
 
 const fromRow = (r: { balance: number; day: string; earned_today: number }): Wallet => ({ balance: r.balance, day: r.day, earnedToday: r.earned_today })
 
-export type WalletStore = { load(): Promise<Wallet>; award(amount: number, reason: string): Promise<{ wallet: Wallet; granted: number }> }
+export type WalletStore = {
+  load(): Promise<Wallet>
+  award(amount: number, reason: string): Promise<{ wallet: Wallet; granted: number }>
+  /** Pay for something; resolves false (and changes nothing) when I can't afford it. */
+  spend(amount: number, reason: string): Promise<{ wallet: Wallet; ok: boolean }>
+}
 
 export function createWalletStore(userId: string, client: SupabaseClient | null): WalletStore {
   let remote = !!client
@@ -57,6 +62,21 @@ export function createWalletStore(userId: string, client: SupabaseClient | null)
       }
       current = fromRow(data as never)
       return { wallet: current, granted: current.balance - before.balance }
+    },
+    async spend(amount, reason) {
+      if (current.balance < amount) return { wallet: current, ok: false }
+      if (remote && client) {
+        const { data, error } = await client.rpc('spend_coins', { amount, reason })
+        if (!error) {
+          current = fromRow(data as never)
+          return { wallet: current, ok: true }
+        }
+        if (!/not enough/.test(error.message)) remote = false
+        else return { wallet: current, ok: false }
+      }
+      current = { ...current, balance: current.balance - amount }
+      writeLocal(userId, current)
+      return { wallet: current, ok: true }
     },
   }
 }

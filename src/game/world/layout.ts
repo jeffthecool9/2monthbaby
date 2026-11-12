@@ -36,7 +36,7 @@ export const DOORS: { a: Vec2; b: Vec2 }[] = [
 export type FurnitureId =
   | 'sofa' | 'coffeeTable' | 'tv' | 'plant' | 'kitchen' | 'diningTable' | 'diningChairA' | 'diningChairB'
   | 'bath' | 'toilet' | 'sink' | 'bed' | 'wardrobe' | 'balconyChairA' | 'balconyChairB'
-export type FurnitureAction = 'sit' | 'sleep' | 'wardrobe'
+export type FurnitureAction = 'sit' | 'sleep' | 'wardrobe' | 'bathe'
 
 export type Furniture = {
   id: FurnitureId
@@ -62,7 +62,7 @@ export const FURNITURE: Furniture[] = [
   { id: 'diningTable', room: 'dining', pos: { x: 9.6, z: 4.9 }, rotY: 0, size: { x: 1.4, z: 0.9 }, actions: [] },
   { id: 'diningChairA', room: 'dining', pos: { x: 8.6, z: 4.9 }, rotY: H, size: { x: 0.5, z: 0.5 }, actions: ['sit'], usePoint: { x: 8.0, z: 4.9 } },
   { id: 'diningChairB', room: 'dining', pos: { x: 10.6, z: 4.9 }, rotY: -H, size: { x: 0.5, z: 0.5 }, actions: ['sit'], usePoint: { x: 11.2, z: 4.9 } },
-  { id: 'bath', room: 'bathroom', pos: { x: 0.45, z: 1.2 }, rotY: 0, size: { x: 0.8, z: 1.7 }, actions: [], usePoint: { x: 1.35, z: 1.4 } },
+  { id: 'bath', room: 'bathroom', pos: { x: 0.45, z: 1.2 }, rotY: 0, size: { x: 0.8, z: 1.7 }, actions: ['bathe'], usePoint: { x: 1.35, z: 1.4 } },
   { id: 'toilet', room: 'bathroom', pos: { x: 2.6, z: 0.4 }, rotY: 0, size: { x: 0.45, z: 0.65 }, actions: [] },
   { id: 'sink', room: 'bathroom', pos: { x: 2.65, z: 1.8 }, rotY: -H, size: { x: 0.5, z: 0.6 }, actions: [] },
   { id: 'bed', room: 'bedroom', pos: { x: 6.2, z: 1.1 }, rotY: 0, size: { x: 1.6, z: 2.0 }, actions: ['sleep'], usePoint: { x: 6.2, z: 2.5 } },

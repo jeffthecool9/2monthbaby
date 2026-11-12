@@ -17,6 +17,7 @@ import { BirthdayBanner } from './ui/BirthdayBanner'
 import { HER_BIRTHDAY, isBirthdayKL } from './sim/birthday'
 import { describeLoadError, setupKey, type LoadError } from './sessionSetup'
 import { createWalletStore } from './net/wallet'
+import { createDecorStore, type DecorStore } from './net/decorStore'
 import type { Wallet } from './play/economy'
 
 const LOCAL_PEOPLE: Record<'her' | 'him', Identity> = {
@@ -45,12 +46,25 @@ function Game({ setup }: { setup: Setup }) {
     return her && (forced || isBirthdayKL(new Date(), HER_BIRTHDAY.month, HER_BIRTHDAY.day)) ? her.name : null
   }, [her])
   const [game, setGame] = useState<GameController | null>(null)
+  const decorStoreRef = useRef<DecorStore | null>(null)
   const [wallet, setWallet] = useState<Wallet | null>(null)
   const [lastGain, setLastGain] = useState<{ amount: number; key: number } | null>(null)
   const store = useMemo(() => createWalletStore(setup.me.userId, setup.houseId ? supabase : null), [setup])
   useEffect(() => {
     void store.load().then(setWallet)
   }, [store])
+  const onSpend = useCallback(async (amount: number, reason: string) => {
+    const { wallet: w, ok } = await store.spend(amount, reason)
+    setWallet(w)
+    if (!ok) game?.toast('Not enough coins yet 🪙')
+    return ok
+  }, [store, game])
+  const decorStore = useMemo(() => createDecorStore(setup.houseId ?? 'local-house', setup.houseId ? supabase : null), [setup])
+  decorStoreRef.current = decorStore
+  useEffect(() => {
+    if (!game) return
+    void decorStore.load().then((d) => game.loadDecor(d))
+  }, [game, decorStore])
   const onEarn = useCallback((amount: number, reason: string) => {
     void store.award(amount, reason).then(({ wallet: w, granted }) => {
       setWallet(w)
@@ -63,7 +77,7 @@ function Game({ setup }: { setup: Setup }) {
   useEffect(() => {
     const start = { x: SPAWN.x + (setup.me.role === 'female' ? -0.6 : 0.6), z: SPAWN.z }
     const presence: PresenceState = { ...setup.me, pos: start, facing: Math.PI, activity: 'idle' }
-    const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName, lite: liteGraphics(), resolveAvatar: supabase && setup.houseId ? (path) => avatarUrl(supabase!, path) : undefined })
+    const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName, lite: liteGraphics(), resolveAvatar: supabase && setup.houseId ? (path) => avatarUrl(supabase!, path) : undefined, onDecor: (change) => void decorStoreRef.current?.save(change, setup.houseId ?? 'local-house') })
     // No rubber-band scrolling behind the game on iOS.
     document.body.style.overscrollBehavior = 'none'
     // Only hand the HUD a controller that is still current (React may mount twice in development).
@@ -93,7 +107,7 @@ function Game({ setup }: { setup: Setup }) {
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#1a0f1f]" style={{ height: '100dvh', fontFamily: GAME_FONT }}>
       <canvas ref={ref} className="block h-full w-full" style={{ touchAction: 'none' }} />
-      <Hud controller={game} onLookChange={onLookChange} onSay={onSay} history={setup.history} wallet={wallet} lastGain={lastGain} onEarn={onEarn} onUploadAvatar={supabase && setup.houseId ? onUploadAvatar : undefined} />
+      <Hud controller={game} onLookChange={onLookChange} onSay={onSay} history={setup.history} wallet={wallet} lastGain={lastGain} onEarn={onEarn} onSpend={onSpend} onUploadAvatar={supabase && setup.houseId ? onUploadAvatar : undefined} />
       {birthdayName && game && <BirthdayBanner name={birthdayName} isHer={setup.me.role === 'female'} />}
     </div>
   )

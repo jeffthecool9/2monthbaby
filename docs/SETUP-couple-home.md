@@ -39,10 +39,17 @@ Left menu → **Authentication** → **Sign In / Providers** → **Email**: keep
 
 (For running locally, put the same two lines in a `.env` file in the project folder.)
 
-## 7. Done
+## 7. Later updates
+
+When the game gains features that need the database, run the new file in `supabase/migrations/` (in number order) the same way as step 2. So far: `0002_avatars.sql` (your own VRoid character), `0003_wallets.sql` (coins), `0004_decor.sql` (shop & decorating).
+
+## 8. Done
 
 Open your Sweet Paradise address on both iPhones, log in, and tap **Share → Add to Home Screen** for a full-screen app icon.
 
 **Keep it awake:** free Supabase projects pause after 7 days with nobody logging in. Playing most days prevents that; if it ever pauses, open the Supabase dashboard and click **Restore**.
 
 **Without Supabase** (testing only): `/?local=1&as=her` and `/?local=1&as=him` in two tabs of the same browser.
+
+### Partner's first login (0005)
+Run `supabase/migrations/0005_claim_home.sql`. After that, any account you create in Authentication → Users that has no profile yet joins the home on first login as the opposite role (your partner becomes the girl character automatically). Rename later with `update public.profiles set display_name = 'Name' where role = 'female';`

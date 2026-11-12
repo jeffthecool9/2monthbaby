@@ -5,8 +5,10 @@ import {
   PointsMaterial, RepeatWrapping, ShaderMaterial, SphereGeometry, SRGBColorSpace, Sprite, SpriteMaterial, Vector3,
 } from 'three'
 import { UNIT } from '../world/layout'
+import type { Daylight } from '../world/daylight'
 
 import { GROUND_Y, buildStreets } from './streets'
+import { allDesigns, type BuildingDesign } from './buildings'
 const CENTRE = new Vector3(UNIT.width / 2, 0, UNIT.depth / 2)
 
 function rng(seed: number) {
@@ -52,7 +54,7 @@ function facadeTextures(seed: number) {
   return { base, emissive }
 }
 
-export type City = { root: Group; update(dt: number, t: number): void }
+export type City = { root: Group; update(dt: number, t: number): void; setDaylight(d: Daylight): void }
 
 export function buildCity(opts: { lite?: boolean } = {}): City {
   const root = new Group()
@@ -64,15 +66,25 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
     new SphereGeometry(600, 48, 24),
     new ShaderMaterial({
       side: BackSide, depthWrite: false, fog: false,
-      uniforms: { sunDir: { value: new Vector3(0.25, 0.08, 1).normalize() } },
+      uniforms: {
+        sunDir: { value: new Vector3(0.25, 0.08, 1).normalize() },
+        top: { value: new Vector3(0.16, 0.17, 0.42) }, mid: { value: new Vector3(0.62, 0.38, 0.62) }, hor: { value: new Vector3(1.0, 0.72, 0.55) },
+        sunStrength: { value: 1 }, night: { value: 0 },
+      },
       vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: `varying vec3 vDir; uniform vec3 sunDir;
+      fragmentShader: `varying vec3 vDir; uniform vec3 sunDir, top, mid, hor; uniform float sunStrength, night;
+        float hash(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,37.719))) * 43758.5453); }
         void main(){
-          float h = clamp(vDir.y, -0.2, 1.0);
-          vec3 top = vec3(0.16,0.17,0.42), mid = vec3(0.62,0.38,0.62), hor = vec3(1.0,0.72,0.55), below = vec3(0.32,0.24,0.38);
+          vec3 d = normalize(vDir);
+          float h = clamp(d.y, -0.2, 1.0);
+          vec3 below = mix(hor, vec3(0.1,0.09,0.14), 0.5);
           vec3 c = h > 0.0 ? mix(hor, mix(mid, top, smoothstep(0.15,0.75,h)), smoothstep(0.0,0.25,h)) : mix(hor, below, smoothstep(0.0,0.2,-h));
-          float s = max(dot(normalize(vDir), sunDir), 0.0);
-          c += vec3(1.0,0.75,0.45) * pow(s, 18.0) * 0.9 + vec3(1.0,0.85,0.6) * pow(s, 400.0) * 2.5;
+          float s = max(dot(d, sunDir), 0.0);
+          c += (vec3(1.0,0.75,0.45) * pow(s, 18.0) * 0.9 + vec3(1.0,0.85,0.6) * pow(s, 400.0) * 2.5) * sunStrength;
+          // Stars fade in at night.
+          vec3 cell = floor(d * 140.0);
+          float star = step(0.9985, hash(cell)) * smoothstep(0.05, 0.4, d.y);
+          c += vec3(star) * night * 0.9;
           gl_FragColor = vec4(c, 1.0);
         }`,
     }),
@@ -85,37 +97,54 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
   root.add(streets.root)
   movers.push(streets.update)
 
-  // Towers: instanced boxes in rings around us, three facade styles.
+  // Buildings: eight real designs (podiums, setbacks, fins, balconies, rooftops) instanced with
+  // per-building colour. Far ring = tall towers for the skyline; mid ring = mid/low-rises below eye level.
   const styles = [0, 1, 2].map((i) => facadeTextures(100 + i))
-  const count = opts.lite ? 70 : 150
-  const perStyle = Math.ceil(count / styles.length)
+  for (const tx of styles) {
+    tx.base.repeat.set(1 / 8, 1 / 24)
+    tx.emissive.repeat.set(1 / 8, 1 / 24)
+  }
+  const designs = allDesigns()
+  const tall = designs.filter((d) => d.height > 90), low = designs.filter((d) => d.height <= 90)
   const dummy = new Object3D()
   const tint = new Color()
-  styles.forEach((tx, si) => {
-    const m = new MeshStandardMaterial({ map: tx.base, emissiveMap: tx.emissive, emissive: new Color('#ffffff'), emissiveIntensity: 1.25, roughness: 0.35, metalness: 0.4 })
-    const mesh = new InstancedMesh(new BoxGeometry(1, 1, 1), m, perStyle)
-    let i = 0
-    while (i < perStyle) {
-      const ang = r() * Math.PI * 2
-      const dist = 190 + Math.pow(r(), 0.8) * 260
-      const x = CENTRE.x + Math.cos(ang) * dist, z = CENTRE.z + Math.sin(ang) * dist
-      const w = 10 + r() * 18, d = 10 + r() * 18
-      // From our floor (~84 m up) nearby blocks sit below eye level; only far towers rise into the sky,
-      // so the window shows a skyline with the sunset above it.
-      const t = Math.min(1, (dist - 190) / 260)
-      const maxTop = -10 + t * 90 + (r() < 0.1 ? 35 : 0)
-      const h = Math.max(12, -GROUND_Y + maxTop * (0.45 + r() * 0.55))
-      dummy.position.set(x, GROUND_Y + h / 2, z)
-      dummy.scale.set(w, h, d)
-      dummy.rotation.y = r() * Math.PI
+  const facadeMats: MeshStandardMaterial[] = []
+  const solidMat = new MeshStandardMaterial({ color: '#cfc8c4', roughness: 0.85, metalness: 0.05 })
+  type Slot = { x: number; z: number; rot: number; scale: number; hue: number }
+  const placements = new Map<BuildingDesign, Slot[]>()
+  const put = (d: BuildingDesign, slot: Slot) => placements.set(d, [...(placements.get(d) ?? []), slot])
+  const nTall = opts.lite ? 36 : 70, nLow = opts.lite ? 40 : 90
+  for (let i = 0; i < nTall; i++) {
+    const ang = r() * Math.PI * 2, dist = 200 + Math.pow(r(), 0.8) * 250
+    put(tall[Math.floor(r() * tall.length)], { x: CENTRE.x + Math.cos(ang) * dist, z: CENTRE.z + Math.sin(ang) * dist, rot: Math.floor(r() * 4) * (Math.PI / 2) + (r() - 0.5) * 0.2, scale: 0.75 + r() * 0.5, hue: r() })
+  }
+  for (let i = 0; i < nLow; i++) {
+    const ang = r() * Math.PI * 2, dist = 75 + r() * 130
+    const x = CENTRE.x + Math.cos(ang) * dist, z = CENTRE.z + Math.sin(ang) * dist
+    // Keep the park and plaza under our window clear.
+    if (Math.abs(x - CENTRE.x) < 55 && z > CENTRE.z - 40 && z < CENTRE.z + 150) continue
+    put(low[Math.floor(r() * low.length)], { x, z, rot: Math.floor(r() * 4) * (Math.PI / 2), scale: 0.8 + r() * 0.4, hue: r() })
+  }
+  placements.forEach((slots, d) => {
+    const tx = styles[designs.indexOf(d) % styles.length]
+    const m = new MeshStandardMaterial({ map: tx.base, emissiveMap: tx.emissive, emissive: new Color('#ffffff'), emissiveIntensity: 1.25, roughness: 0.3, metalness: 0.45, color: '#dfe6f2' })
+    facadeMats.push(m)
+    const facade = new InstancedMesh(d.facade, m, slots.length)
+    const solid = new InstancedMesh(d.solid, solidMat, slots.length)
+    slots.forEach((slot, i) => {
+      dummy.position.set(slot.x, GROUND_Y, slot.z)
+      dummy.rotation.set(0, slot.rot, 0)
+      dummy.scale.setScalar(slot.scale)
       dummy.updateMatrix()
-      mesh.setMatrixAt(i, dummy.matrix)
-      mesh.setColorAt(i, tint.setHSL(0.68 + r() * 0.12, 0.15 + r() * 0.15, 0.62 + r() * 0.25))
-      i++
-    }
-    // Repeat the facade over the height of each tower.
-    mesh.geometry.attributes.uv.array.forEach((_, k, arr) => ((arr as Float32Array)[k] *= k % 2 ? 4 : 2))
-    root.add(mesh)
+      facade.setMatrixAt(i, dummy.matrix)
+      solid.setMatrixAt(i, dummy.matrix)
+      facade.setColorAt(i, tint.setHSL(0.55 + slot.hue * 0.2, 0.12 + slot.hue * 0.2, 0.7 + slot.hue * 0.2))
+      solid.setColorAt(i, tint.setHSL(0.08 + slot.hue * 0.05, 0.08, 0.6 + slot.hue * 0.3))
+    })
+    facade.castShadow = solid.castShadow = false
+    root.add(facade, solid)
+  })
+  styles.forEach((tx, si) => {
     // Windows switch on and off over time.
     let acc = 0
     movers.push((dt) => {
@@ -204,5 +233,16 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
     })
   }
 
-  return { root, update: (dt, t) => movers.forEach((m) => m(dt, t)) }
+  const skyMat = sky.material as ShaderMaterial
+  const setDaylight = (d: Daylight) => {
+    skyMat.uniforms.sunDir.value.set(d.sunDir[0], d.sunDir[1], d.sunDir[2])
+    skyMat.uniforms.top.value.set(...d.skyTop)
+    skyMat.uniforms.mid.value.set(...d.skyMid)
+    skyMat.uniforms.hor.value.set(...d.skyHorizon)
+    skyMat.uniforms.sunStrength.value = d.sunElevation > -0.1 ? 1 : 0
+    skyMat.uniforms.night.value = d.night
+    for (const m of facadeMats) m.emissiveIntensity = 0.05 + 1.3 * d.windowGlow
+    streets.setDaylight(d)
+  }
+  return { root, update: (dt, t) => movers.forEach((m) => m(dt, t)), setDaylight }
 }
