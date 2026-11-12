@@ -1,97 +1,140 @@
 import { describe, expect, test } from 'vitest'
-import { ACTIVITIES, activityFor, newGame, applyInput, isDone, score, stepOf, type Input } from '../../src/game/play/minigame'
+import { ACTIVITIES, HAS_SET, activityFor, newGame, applyInput, isDone, score, stepOf, stepsOf, type GameState, type Input } from '../../src/game/play/minigame'
+import { DISHES, DISH_IDS } from '../../src/game/play/recipes'
+
+/** Play a step perfectly. */
+function solve(g: GameState): GameState {
+  const s = stepOf(g)
+  const at = g.step
+  let guard = 0
+  while (g.step === at && guard++ < 500) {
+    switch (s.mechanic) {
+      case 'count': g = applyInput(g, { type: 'hit' }); break
+      case 'circle': g = applyInput(g, { type: 'circle', radians: 0.5 }); break
+      case 'timing': g = applyInput(g, { type: 'swipe', inWindow: true }); break
+      case 'scrub': for (const t of s.targets!) g = applyInput(g, { type: 'scrub', x: t.x, y: t.y }); break
+      case 'gauge': {
+        const [lo, hi] = s.window!
+        g = applyInput({ ...g, gauge: (lo + hi) / 2 }, { type: 'release' })
+        break
+      }
+      case 'relax': return g
+    }
+  }
+  return g
+}
 
 describe('activities', () => {
-  test('every chore and furniture action has an activity with a first-person view', () => {
-    for (const id of ['cook', 'dishes', 'water', 'bed', 'bath', 'sit', 'tv', 'sleep', 'cleanbath'] as const) {
-      expect(ACTIVITIES[id].title).toBeTruthy()
-      expect(ACTIVITIES[id].eye.length).toBe(3)
-    }
+  test('every chore and furniture action has an activity', () => {
+    for (const id of ['cook', 'dishes', 'water', 'bed', 'bath', 'sit', 'tv', 'sleep', 'cleanbath'] as const) expect(ACTIVITIES[id].title).toBeTruthy()
     expect(activityFor({ mission: 'cook' })).toBe('cook')
     expect(activityFor({ furniture: 'sofa', action: 'sit' })).toBe('tv')
     expect(activityFor({ furniture: 'bath' })).toBe('bath')
     expect(activityFor({ furniture: 'bed', action: 'sleep' })).toBe('sleep')
+    expect(HAS_SET.cook && HAS_SET.bath && !HAS_SET.sit).toBe(true)
   })
 })
 
-describe('cooking game', () => {
-  test('chop: tapping the vegetables completes the step', () => {
-    let g = newGame('cook')
-    expect(stepOf(g).kind).toBe('tap')
-    for (let i = 0; i < 12; i++) g = applyInput(g, { type: 'tap', hit: true })
+describe('recipes', () => {
+  test('every dish has a fixed procedure from prep to plate', () => {
+    expect(DISH_IDS.length).toBeGreaterThanOrEqual(4)
+    for (const id of DISH_IDS) {
+      const steps = DISHES[id].steps
+      expect(steps.length).toBeGreaterThanOrEqual(8)
+      expect(steps.some((s) => s.action === 'plate')).toBe(true)
+      expect(steps.some((s) => s.action === 'heat')).toBe(true)
+    }
+    expect(DISHES.friedrice.steps[0].action).toBe('chop')
+    expect(DISHES.pancakes.steps.some((s) => s.action === 'flip')).toBe(true)
+  })
+
+  test('cooking does nothing until a dish is chosen', () => {
+    const g = newGame('cook')
+    expect(stepsOf(g)).toEqual([])
+    expect(applyInput(g, { type: 'hit' })).toBe(g)
+    expect(isDone(g)).toBe(false)
+  })
+
+  test('playing every step of each dish perfectly finishes with 3 stars', () => {
+    for (const id of DISH_IDS) {
+      let g = newGame('cook', id)
+      for (let i = 0; i < DISHES[id].steps.length; i++) g = solve(g)
+      expect(isDone(g)).toBe(true)
+      expect(score(g)).toBe(3)
+    }
+  })
+})
+
+describe('mechanics', () => {
+  test('chop: each good slice counts, a slice off the line is a miss', () => {
+    let g = newGame('cook', 'friedrice')
+    expect(stepOf(g).action).toBe('chop')
+    g = applyInput(g, { type: 'miss' })
+    expect(g.misses).toBe(1)
+    for (let i = 0; i < 4; i++) g = applyInput(g, { type: 'hit' })
     expect(g.step).toBe(1)
   })
 
-  test('stir: circling the spoon fills the step; wrong direction does nothing', () => {
-    let g = newGame('cook')
-    g = { ...g, step: 1 }
-    expect(stepOf(g).kind).toBe('stir')
-    g = applyInput(g, { type: 'stir', radians: -2 })
+  test('stir: clockwise circles fill the step; the other way does nothing', () => {
+    let g = { ...newGame('cook', 'friedrice'), step: 6 }
+    expect(stepOf(g).mechanic).toBe('circle')
+    g = applyInput(g, { type: 'circle', radians: -2 })
     expect(g.progress).toBe(0)
-    for (let i = 0; i < 8; i++) g = applyInput(g, { type: 'stir', radians: Math.PI })
-    expect(g.step).toBe(2)
+    for (let i = 0; i < 40; i++) g = applyInput(g, { type: 'circle', radians: 0.5 })
+    expect(g.step).toBe(7)
   })
 
-  test('flip: a swipe inside the timing window counts, outside is a miss', () => {
-    let g = { ...newGame('cook'), step: 2 }
-    expect(stepOf(g).kind).toBe('flip')
+  test('flip: a swipe outside the golden window is a miss', () => {
+    const at = DISHES.pancakes.steps.findIndex((s) => s.action === 'flip')
+    let g = { ...newGame('cook', 'pancakes'), step: at }
     g = applyInput(g, { type: 'swipe', inWindow: false })
     expect(g.misses).toBe(1)
     g = applyInput(g, { type: 'swipe', inWindow: true })
-    g = applyInput(g, { type: 'swipe', inWindow: true })
-    g = applyInput(g, { type: 'swipe', inWindow: true })
-    expect(g.step).toBe(3)
+    expect(g.step).toBe(at + 1)
   })
 
-  test('plating finishes the dish and misses lower the score', () => {
-    let g = { ...newGame('cook'), step: 3 }
-    g = applyInput(g, { type: 'tap', hit: true })
-    expect(isDone(g)).toBe(true)
-    expect(score(g)).toBe(3)
-    expect(score({ ...g, misses: 4 })).toBe(1)
+  test('gauge: holding fills; overfilling is a miss and resets, stopping short keeps the level', () => {
+    let g = { ...newGame('cook', 'friedrice'), step: 4 }
+    expect(stepOf(g).action).toBe('heat')
+    g = applyInput(g, { type: 'hold', dt: 1000 })
+    expect(g.gauge).toBeGreaterThan(0.3)
+    const short = applyInput(g, { type: 'release' })
+    expect(short.misses).toBe(1)
+    expect(short.gauge).toBe(g.gauge)
+    const over = applyInput({ ...g, gauge: 0.99 }, { type: 'release' })
+    expect(over.gauge).toBe(0)
   })
-})
 
-describe('scrub games', () => {
-  test('dishes: covering every dirty spot finishes', () => {
+  test('scrub: covering every spot finishes; far away does nothing', () => {
     let g = newGame('dishes')
-    const spots = stepOf(g).targets!
-    expect(spots.length).toBeGreaterThan(3)
-    for (const s of spots) g = applyInput(g, { type: 'scrub', x: s.x, y: s.y })
-    expect(isDone(g)).toBe(true)
-  })
-
-  test('scrubbing far from a spot does nothing', () => {
-    const g = newGame('cleanbath')
     expect(applyInput(g, { type: 'scrub', x: -5, y: -5 }).progress).toBe(0)
-  })
-})
-
-describe('pour game', () => {
-  test('watering: holding fills the gauge; release in the green zone succeeds', () => {
-    let g = newGame('water')
-    g = applyInput(g, { type: 'hold', dt: 1500 })
-    expect(g.gauge).toBeGreaterThan(0)
-    const target = stepOf(g).window!
-    g = { ...g, gauge: (target[0] + target[1]) / 2 }
-    g = applyInput(g, { type: 'release' })
-    expect(isDone(g)).toBe(true)
+    for (const s of stepOf(g).targets!) g = applyInput(g, { type: 'scrub', x: s.x, y: s.y })
+    expect(g.step).toBe(1)
   })
 
-  test('overfilling counts as a miss and resets the gauge', () => {
-    let g = newGame('water')
-    g = { ...g, gauge: 0.99 }
-    g = applyInput(g, { type: 'release' })
-    expect(g.misses).toBe(1)
-    expect(g.gauge).toBe(0)
+  test('every chore can be finished', () => {
+    for (const id of ['dishes', 'water', 'bed', 'cleanbath'] as const) {
+      let g = newGame(id)
+      for (let i = 0; i < ACTIVITIES[id].steps.length; i++) g = solve(g)
+      expect(isDone(g)).toBe(true)
+    }
   })
 })
 
 describe('relax activities', () => {
-  test('tv and bath are not missions: they never finish on their own', () => {
-    expect(isDone(newGame('tv'))).toBe(false)
-    const b = applyInput(newGame('bath'), { type: 'tap', hit: true } as Input)
+  test('bath goes fill → warm → foam → soak and never ends on its own', () => {
+    let g = newGame('bath')
+    for (let i = 0; i < 3; i++) g = solve(g)
+    expect(stepOf(g).action).toBe('soak')
+    const b = applyInput(g, { type: 'hit' } as Input)
     expect(isDone(b)).toBe(false)
-    expect(b.taps).toBe(1)
+    expect(b.taps).toBe(g.taps + 1)
+    expect(applyInput(g, { type: 'miss' }).misses).toBe(g.misses)
+  })
+
+  test('tv swipes change channel and never finish', () => {
+    const g = applyInput(newGame('tv'), { type: 'swipe' })
+    expect(g.progress).toBe(0.25)
+    expect(isDone(g)).toBe(false)
   })
 })

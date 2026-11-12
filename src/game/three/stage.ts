@@ -27,6 +27,8 @@ export type Stage = {
   /** Apply the Kuala Lumpur time of day to sun, sky light, fog and exposure. */
   setDaylight(d: Daylight): void
   render(): void
+  /** Draw this scene and camera instead of the apartment (close-up activity sets). */
+  override: { scene: Scene; camera: PerspectiveCamera } | null
   resize(): void
   dispose(): void
 }
@@ -87,11 +89,13 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
   scene.add(moon, moon.target)
 
   let composer: EffectComposer | null = null
+  let renderPass: RenderPass | null = null
   let gtao: GTAOPass | null = null
   let bloom: UnrealBloomPass | null = null
   if (!lite) {
     composer = new EffectComposer(renderer)
-    composer.addPass(new RenderPass(scene, camera))
+    renderPass = new RenderPass(scene, camera)
+    composer.addPass(renderPass)
     gtao = new GTAOPass(scene, camera, 1, 1)
     gtao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.4, thickness: 1.2, scale: 1.1 })
     gtao.blendIntensity = 0.85
@@ -157,6 +161,26 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
   resize()
 
   const render = () => {
+    const o = stage.override
+    if (o) {
+      // Close-up set: same renderer and bloom/SMAA, no ambient-occlusion pass (it's bound to the apartment).
+      const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight
+      if (o.camera.aspect !== w / h) {
+        o.camera.aspect = w / h
+        o.camera.updateProjectionMatrix()
+      }
+      if (composer && renderPass) {
+        renderPass.scene = o.scene
+        renderPass.camera = o.camera
+        const ao = gtao?.enabled ?? false
+        if (gtao) gtao.enabled = false
+        composer.render()
+        if (gtao) gtao.enabled = ao
+        renderPass.scene = scene
+        renderPass.camera = camera
+      } else renderer.render(o.scene, o.camera)
+      return
+    }
     controls.update()
     if (screenOffset.y !== 0) {
       const h = canvas.clientHeight || window.innerHeight, w = canvas.clientWidth || window.innerWidth
@@ -166,8 +190,8 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
     else renderer.render(scene, camera)
   }
 
-  return {
-    renderer, scene, camera, controls, sun, screenOffset, adapt, setDaylight, render, resize,
+  const stage: Stage = {
+    renderer, scene, camera, controls, sun, screenOffset, adapt, setDaylight, render, resize, override: null,
     dispose() {
       controls.dispose()
       composer?.dispose()
@@ -175,6 +199,7 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
       renderer.dispose()
     },
   }
+  return stage
 }
 
 export const tmpV = new Vector3()
