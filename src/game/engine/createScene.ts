@@ -27,9 +27,13 @@ export function createScene(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
   camera.angularSensibilityY = 1500
   camera.minZ = 0.1
   camera.maxZ = 500
-  // Portrait phones: keep the horizontal view wide so the room fits.
-  camera.fovMode = ArcRotateCamera.FOVMODE_HORIZONTAL_FIXED
-  camera.fov = 1.15
+  // Portrait phones get a taller view so the room still fits side to side.
+  const fitFov = () => {
+    const aspect = engine.getRenderWidth() / Math.max(1, engine.getRenderHeight())
+    camera.fov = aspect < 1 ? 1.15 : 0.8
+  }
+  fitFov()
+  engine.onResizeObservable.add(fitFov)
   camera.attachControl(canvas, true)
 
   // Sunset HDRI lights the room (IBL); the view out of the window is the painted high-rise skyline.
