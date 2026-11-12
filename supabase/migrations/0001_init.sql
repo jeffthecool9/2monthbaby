@@ -23,11 +23,16 @@ create table if not exists public.chat_messages (
 );
 create index if not exists chat_messages_house_time on public.chat_messages (house_id, created_at desc);
 
--- The caller's house, looked up without tripping RLS on profiles.
-create or replace function public.my_house_id() returns uuid
-language sql stable security definer set search_path = public as $$
+-- The house of whoever is signed in, looked up without tripping RLS on profiles.
+create or replace function public.my_house_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
   select house_id from public.profiles where id = auth.uid()
-$$;
+$fn$;
 
 alter table public.houses enable row level security;
 alter table public.profiles enable row level security;
