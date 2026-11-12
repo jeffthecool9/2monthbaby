@@ -8,7 +8,7 @@ import { buildCity, type City } from './three/city'
 import { Avatar, PLACEHOLDER_AVATAR } from './three/avatar'
 import { addBirthdayDecor } from './three/decor'
 import { classifyGesture, type PointerSample } from './input/gesture'
-import { cleanChat, type PresenceState } from './net/protocol'
+import { cleanChat, type GameId, type GameOp, type PresenceState } from './net/protocol'
 import type { Room } from './net/room'
 import { PAIR_RANGE, createSim, step, type Avatar as SimAvatar, type HudEvent, type Identity, type SimEvent, type SimState } from './sim/sim'
 import type { FurnitureAction, FurnitureId } from './world/layout'
@@ -166,6 +166,20 @@ export class GameController {
   /** Action wheel: together if my partner is close, otherwise on my own. */
   action(kind: ActionKind) {
     this.dispatch({ type: 'action', kind, id: newId() })
+  }
+
+  /** Start a daily chore (walks there, works, then pays). */
+  mission(id: string) {
+    this.dispatch({ type: 'mission', id })
+  }
+
+  /** Couple game messages (invites, moves) go straight to my partner. */
+  sendGame(msg: { game: GameId; op: GameOp; id: string; value?: number }) {
+    this.room.send({ t: 'game', from: this.sim.me.userId, at: Date.now(), ...msg })
+  }
+
+  toast(text: string) {
+    this.emitHud({ type: 'toast', text })
   }
 
   /** Is my partner close enough for actions to become couple interactions? */

@@ -7,9 +7,11 @@ import type { NetMsg, PresenceState } from '../net/protocol'
 import { BED_SLEEP_SPOTS, FURNITURE, type FurnitureAction, type FurnitureId } from '../world/layout'
 import { NavGrid } from '../world/navgrid'
 import type { ActionKind, Activity, EmoteKind, InteractionKind, Role, SoloClip, UserId, Vec2 } from '../types'
+import { MISSIONS, affectionReward, missionReady } from '../play/economy'
 import { INTERACTION_DURATION, facingTo, needsRequest, planInteraction, resolveCrossing, type InteractMsg, type Plan } from './interactions'
 
 export const WALK_SPEED = 1.6 // m/s
+const KIND_LABEL: Record<InteractionKind, string> = { kiss: 'Kiss', hug: 'Hug', highfive: 'High five', comfort: 'Comfort', wave: 'Wave' }
 /** Within this distance an action becomes a real couple interaction. */
 export const PAIR_RANGE = 1.8
 const SOLO_CLIP: Record<ActionKind, SoloClip> = { kiss: 'blow-kiss', hug: 'hug', highfive: 'highfive', comfort: 'comfort', wave: 'wave', dance: 'dance' }
@@ -30,7 +32,9 @@ export type Avatar = Identity & {
   furniture?: FurnitureId
   online: boolean
   /** What to do on arrival at the end of `path`. */
-  then?: { use: FurnitureId; action: FurnitureAction }
+  then?: { use: FurnitureId; action: FurnitureAction } | { mission: string }
+  /** A chore in progress: pays when `until` passes, cancelled by walking away. */
+  chore?: { id: string; until: number }
 }
 
 export type ActiveInteraction = {
@@ -52,6 +56,8 @@ export type HudEvent =
   | { type: 'wardrobe' }
   | { type: 'toast'; text: string }
   | { type: 'request-cancel' }
+  | { type: 'earn'; amount: number; reason: string }
+  | { type: 'game'; msg: Extract<NetMsg, { t: 'game' }> }
 
 export type SimState = {
   me: Avatar
@@ -62,6 +68,8 @@ export type SimState = {
   incoming: { id: string; kind: InteractionKind; from: UserId } | null
   /** Latest presence from my partner's phone, reconciled whenever we're not simulating them. */
   partnerPresence: PresenceState | null
+  /** When each chore was last finished (ms). */
+  missionsDone: Record<string, number>
   outbox: NetMsg[]
   hud: HudEvent[]
 }
@@ -76,6 +84,7 @@ export type SimEvent =
   | { type: 'face'; facing: number }
   | { type: 'set-avatar'; avatar: string }
   | { type: 'action'; kind: ActionKind; id: string }
+  | { type: 'mission'; id: string }
   | { type: 'accept'; id: string }
   | { type: 'use-furniture'; id: FurnitureId; action: FurnitureAction }
   | { type: 'say'; text: string; id: string }
@@ -101,7 +110,7 @@ export function createSim(me: Identity, start: Vec2, partner: Identity | null): 
   return {
     me: avatar(me, start, true),
     partner: partner ? asleep(avatar(partner, bedSpot(partner.role), false), false) : null,
-    interaction: null, outgoing: {}, incoming: null, partnerPresence: null, outbox: [], hud: [],
+    interaction: null, outgoing: {}, incoming: null, partnerPresence: null, missionsDone: {}, outbox: [], hud: [],
   }
 }
 
@@ -113,7 +122,8 @@ export function interactionClip(kind: InteractionKind, initiator: boolean): Clip
   return kind
 }
 
-function walkTo(a: Avatar, target: Vec2, now: number): Avatar {
+function walkTo(a0: Avatar, target: Vec2, now: number): Avatar {
+  const a: Avatar = { ...a0, chore: undefined }
   const path = grid.findPath(a.pos, target)
   if (!path || path.length < 2) return { ...a, path: [], activity: 'idle', clip: 'idle', clipStart: now, furniture: undefined }
   return { ...a, path: path.slice(1), activity: 'walking', clip: 'walk', clipStart: now, furniture: undefined }
@@ -136,7 +146,11 @@ function advance(a: Avatar, dt: number, now: number): Avatar {
   }
   const moved = { ...a, pos, facing, path }
   if (path.length) return moved
-  if (a.then) return useFurniture(moved, a.then.use, a.then.action, now)
+  if (a.then && 'mission' in a.then) {
+    const m = MISSIONS.find((x) => x.id === (a.then as { mission: string }).mission)
+    if (m) return { ...moved, then: undefined, activity: 'idle', clip: 'chore', clipStart: now, chore: { id: m.id, until: now + m.durationMs } }
+  }
+  if (a.then && 'use' in a.then) return useFurniture(moved, a.then.use, a.then.action, now)
   return { ...moved, activity: a.activity === 'walking' ? 'idle' : a.activity, clip: a.activity === 'walking' ? 'idle' : a.clip, clipStart: now }
 }
 
@@ -206,7 +220,10 @@ function tickInteraction(s: SimState, now: number): SimState {
       : place(s.partner, it.plan.initiatorSpot, it.plan.initiatorFacing, true)
     return { ...s, me, partner, interaction: { ...it, phase: 'play', phaseStart: now } }
   }
-  return now - it.phaseStart >= INTERACTION_DURATION[it.kind] ? endInteraction(s, now) : s
+  if (now - it.phaseStart < INTERACTION_DURATION[it.kind]) return s
+  const reward = it.initiator === s.me.userId ? affectionReward(s.me.role, it.kind) : 0
+  const done = endInteraction(s, now)
+  return reward ? { ...done, hud: [...done.hud, { type: 'earn', amount: reward, reason: KIND_LABEL[it.kind] }] } : done
 }
 
 function onPresence(s: SimState, others: PresenceState[], now: number): SimState {
@@ -269,6 +286,8 @@ function onNet(s: SimState, msg: NetMsg, now: number): SimState {
       return { ...s, partner: emoteOn(partner, msg.emote, now) }
     case 'look':
       return { ...s, partner: { ...partner, look: msg.look } }
+    case 'game':
+      return { ...s, hud: [...s.hud, { type: 'game', msg }] }
     case 'act':
       if (s.interaction || partner.activity === 'walking') return s
       return { ...s, partner: { ...partner, activity: 'idle', clip: msg.clip, clipStart: now } }
@@ -289,13 +308,21 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       const settle = (a: Avatar): Avatar => {
         let out = a
         if (a.expression !== 'neutral' && now >= a.expressionUntil) out = { ...out, expression: 'neutral' }
-        if (!CLIP_DURATION[out.clip] || out.activity !== 'idle') return out
+        if (out.chore || !CLIP_DURATION[out.clip] || out.activity !== 'idle') return out
         const isEmote = out.clip !== 'idle' && out.clip !== 'walk' && out.clip !== 'sit' && out.clip !== 'sleep'
         return isEmote && now - out.clipStart >= CLIP_DURATION[out.clip] ? { ...out, clip: 'idle', clipStart: now } : out
       }
       me = settle(me)
       partner = partner ? settle(partner) : null
-      return reconcilePartner(tickInteraction({ ...s, me, partner }, now), now)
+      // Finished chore → pay it and start its cooldown.
+      let hud = s.hud, missionsDone = s.missionsDone
+      if (me.chore && now >= me.chore.until) {
+        const m = MISSIONS.find((x) => x.id === me.chore!.id)!
+        hud = [...hud, { type: 'earn', amount: m.reward, reason: m.label }]
+        missionsDone = { ...missionsDone, [m.id]: now }
+        me = { ...me, chore: undefined, clip: 'happy', clipStart: now }
+      }
+      return reconcilePartner(tickInteraction({ ...s, me, partner, hud, missionsDone }, now), now)
     }
     case 'tap-floor': {
       if (s.interaction) return s
@@ -322,6 +349,20 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       }
       const msg: InteractMsg = { t: 'interact', id: e.id, from: s.me.userId, to: p.userId, kind: e.kind, at: now }
       return startInteraction({ ...s, outbox: [...s.outbox, msg] }, msg, now)
+    }
+    case 'mission': {
+      const m = MISSIONS.find((x) => x.id === e.id)
+      if (!m || s.interaction) return s
+      if (!missionReady(m, s.missionsDone[m.id], now)) {
+        const mins = Math.ceil((m.cooldownMs - (now - s.missionsDone[m.id])) / 60_000)
+        return { ...s, hud: [...s.hud, { type: 'toast', text: `${m.emoji} ${m.label} again in ${mins} min` }] }
+      }
+      const f = FURNITURE.find((x) => x.id === m.furniture)!
+      let me = walkTo(s.me, f.usePoint ?? grid.nearestWalkable(f.pos), now)
+      if (me.activity !== 'walking') me = { ...me, clip: 'chore', clipStart: now, chore: { id: m.id, until: now + m.durationMs } }
+      else me = { ...me, then: { mission: m.id } }
+      const outbox = me.activity === 'walking' ? [...s.outbox, { t: 'move' as const, from: me.userId, path: [{ ...s.me.pos }, ...me.path], at: now }] : s.outbox
+      return { ...s, me, outbox }
     }
     case 'action': {
       if (s.interaction || s.me.activity === 'walking') return s

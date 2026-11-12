@@ -5,6 +5,8 @@ import type { CharacterLook } from '../character/look'
 import { FURNITURE, type FurnitureAction, type FurnitureId } from '../world/layout'
 import type { ActionKind } from '../types'
 import { RadialMenu } from './RadialMenu'
+import { CoinPill, Games } from './Games'
+import { MISSIONS, type Wallet } from '../play/economy'
 import { ActionWheel, type WheelItem } from './ActionWheel'
 import { Bubbles } from './Bubbles'
 import { ChatBar } from './ChatBar'
@@ -59,11 +61,15 @@ function SettingsButton() {
   )
 }
 
-export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history = [], extra }: {
+export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, wallet = null, lastGain = null, history = [], extra }: {
   controller: GameController | null
   onLookChange?: (look: CharacterLook) => void
   /** Upload a VRoid .vrm as my character (only when connected to Supabase). */
   onUploadAvatar?: (file: File) => Promise<void>
+  /** Coins earned (missions, affection, games). */
+  onEarn?: (amount: number, reason: string) => void
+  wallet?: Wallet | null
+  lastGain?: { amount: number; key: number } | null
   /** Called with each chat message I send (after cleaning), e.g. to save it. */
   onSay?: (text: string) => void
   /** Saved chat loaded at start. */
@@ -75,6 +81,9 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history =
   const [toast, setToast] = useState<string | null>(null)
   const [log, setLog] = useState<LogLine[]>(history)
   const [logOpen, setLogOpen] = useState(false)
+  const onEarnRef = useRef(onEarn)
+  onEarnRef.current = onEarn
+  const earn = useCallback((amount: number, reason: string) => onEarnRef.current?.(amount, reason), [])
   // GTA-style action wheel: hold the 💞 button and slide, or tap to open and tap.
   const [radial, setRadial] = useState(false)
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null)
@@ -113,13 +122,16 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history =
       else if (e.type === 'wheel-partner') setRadial(true)
       else if (e.type === 'wheel-furniture') {
         const f = FURNITURE.find((x) => x.id === e.id)
-        if (f?.actions.length) setWheel({ at: e.screen, items: f.actions.map((a) => ACTION_ITEM[a]), furniture: e.id })
+        const chores = MISSIONS.filter((m) => m.furniture === e.id).map((m) => ({ id: `mission:${m.id}`, label: m.label.split(' ').slice(0, 2).join(' '), emoji: m.emoji }))
+        const items = [...(f?.actions ?? []).map((a) => ACTION_ITEM[a]), ...chores]
+        if (items.length) setWheel({ at: e.screen, items, furniture: e.id })
       } else if (e.type === 'wardrobe') {
         setWardrobe(controller.state.me.look)
         controller.focusOnMe(true)
       }
       else if (e.type === 'partner-online') setToast(e.online ? `${e.name} is home 🏠` : `${e.name} went to sleep 😴`)
       else if (e.type === 'toast') setToast(e.text)
+      else if (e.type === 'earn') onEarnRef.current?.(e.amount, e.reason)
     })
   }, [controller])
 
@@ -131,13 +143,16 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history =
 
   const pick = (id: string) => {
     if (!controller || !wheel) return
-    if (wheel.furniture) controller.useFurniture(wheel.furniture, id as FurnitureAction)
+    if (id.startsWith('mission:')) controller.mission(id.slice(8))
+    else if (wheel.furniture) controller.useFurniture(wheel.furniture, id as FurnitureAction)
   }
 
   return (
     <>
       <Bubbles controller={controller} />
       <SettingsButton />
+      <CoinPill wallet={wallet} lastGain={lastGain} />
+      <Games controller={controller} onEarn={earn} hidden={!!wardrobe} />
       {!wardrobe && controller && (
         <button
           type="button"

@@ -11,6 +11,8 @@ const valid = [
   { t: 'chat', id: 'c1', from: 'a', text: 'hi', at: 1 },
   { t: 'emote', from: 'a', emote: 'shy', at: 1 },
   { t: 'look', from: 'a', look: defaultLook('male') },
+  { t: 'game', from: 'a', game: 'ttt', op: 'move', id: 'g1', value: 4, at: 1 },
+  { t: 'game', from: 'a', game: 'tot', op: 'invite', id: 'g2', at: 1 },
 ]
 
 describe('parseMsg', () => {

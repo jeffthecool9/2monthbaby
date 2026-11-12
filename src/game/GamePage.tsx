@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { GameController } from './GameController'
 import { defaultLook, type CharacterLook } from './character/look'
@@ -16,6 +16,8 @@ import type { LogLine } from './ui/ChatLog'
 import { BirthdayBanner } from './ui/BirthdayBanner'
 import { HER_BIRTHDAY, isBirthdayKL } from './sim/birthday'
 import { describeLoadError, setupKey, type LoadError } from './sessionSetup'
+import { createWalletStore } from './net/wallet'
+import type { Wallet } from './play/economy'
 
 const LOCAL_PEOPLE: Record<'her' | 'him', Identity> = {
   her: { userId: 'local-her', name: 'Her', role: 'female', look: defaultLook('female') },
@@ -43,6 +45,19 @@ function Game({ setup }: { setup: Setup }) {
     return her && (forced || isBirthdayKL(new Date(), HER_BIRTHDAY.month, HER_BIRTHDAY.day)) ? her.name : null
   }, [her])
   const [game, setGame] = useState<GameController | null>(null)
+  const [wallet, setWallet] = useState<Wallet | null>(null)
+  const [lastGain, setLastGain] = useState<{ amount: number; key: number } | null>(null)
+  const store = useMemo(() => createWalletStore(setup.me.userId, setup.houseId ? supabase : null), [setup])
+  useEffect(() => {
+    void store.load().then(setWallet)
+  }, [store])
+  const onEarn = useCallback((amount: number, reason: string) => {
+    void store.award(amount, reason).then(({ wallet: w, granted }) => {
+      setWallet(w)
+      if (granted > 0) setLastGain({ amount: granted, key: Date.now() })
+      else game?.toast('Daily coin limit reached — back at midnight 🌙')
+    })
+  }, [store, game])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -51,9 +66,12 @@ function Game({ setup }: { setup: Setup }) {
     const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName, lite: liteGraphics(), resolveAvatar: supabase && setup.houseId ? (path) => avatarUrl(supabase!, path) : undefined })
     // No rubber-band scrolling behind the game on iOS.
     document.body.style.overscrollBehavior = 'none'
-    void g.start().then(() => setGame(g))
+    // Only hand the HUD a controller that is still current (React may mount twice in development).
+    let alive = true
+    void g.start().then(() => alive && setGame(g))
     if (import.meta.env.DEV) (window as unknown as { __game: GameController }).__game = g
     return () => {
+      alive = false
       setGame(null)
       g.dispose()
     }
@@ -75,7 +93,7 @@ function Game({ setup }: { setup: Setup }) {
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#1a0f1f]" style={{ height: '100dvh', fontFamily: GAME_FONT }}>
       <canvas ref={ref} className="block h-full w-full" style={{ touchAction: 'none' }} />
-      <Hud controller={game} onLookChange={onLookChange} onSay={onSay} history={setup.history} onUploadAvatar={supabase && setup.houseId ? onUploadAvatar : undefined} />
+      <Hud controller={game} onLookChange={onLookChange} onSay={onSay} history={setup.history} wallet={wallet} lastGain={lastGain} onEarn={onEarn} onUploadAvatar={supabase && setup.houseId ? onUploadAvatar : undefined} />
       {birthdayName && game && <BirthdayBanner name={birthdayName} isHer={setup.me.role === 'female'} />}
     </div>
   )

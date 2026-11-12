@@ -25,6 +25,12 @@ export type NetMsg =
   | { t: 'emote'; from: UserId; emote: EmoteKind; at: number }
   | { t: 'look'; from: UserId; look: CharacterLook }
   | { t: 'act'; from: UserId; clip: SoloClip; at: number }
+  | { t: 'game'; from: UserId; game: GameId; op: GameOp; id: string; value?: number; at: number }
+
+export type GameId = 'ttt' | 'tot'
+export type GameOp = 'invite' | 'accept' | 'decline' | 'move' | 'next' | 'quit'
+const GAME_IDS: readonly GameId[] = ['ttt', 'tot']
+const GAME_OPS: readonly GameOp[] = ['invite', 'accept', 'decline', 'move', 'next', 'quit']
 
 export const QUICK_MESSAGES = ['Hello 👋', 'Byebye 👋', 'Kiss 😘', 'Miss you 🥺', 'Good night 🌙', 'Hungry 🍜', 'Love you ❤️']
 export const MAX_CHAT = 200
@@ -94,6 +100,12 @@ export function parseMsg(x: unknown): NetMsg | null {
         : null
     case 'look':
       return isStr(m.from) && isValidLook(m.look) ? { t: 'look', from: m.from, look: { ...m.look } } : null
+    case 'game': {
+      if (!isStr(m.from) || !isStr(m.id) || !isNum(m.at) || !GAME_IDS.includes(m.game as GameId) || !GAME_OPS.includes(m.op as GameOp)) return null
+      const out: NetMsg = { t: 'game', from: m.from, game: m.game as GameId, op: m.op as GameOp, id: m.id, at: m.at }
+      if (isNum(m.value)) out.value = m.value
+      return out
+    }
     case 'act':
       return isStr(m.from) && isNum(m.at) && SOLO_CLIPS.includes(m.clip as SoloClip) ? { t: 'act', from: m.from, clip: m.clip as SoloClip, at: m.at } : null
     default:

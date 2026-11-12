@@ -392,7 +392,7 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
       rbox(0.42, 0.5, 0.38, 0.03, oak, x, 0.25, -Lb / 2 + 0.25, g)
       const base = new Mesh(new CylinderGeometry(0.05, 0.07, 0.22, 16), mat('#efe6dc', 0.4))
       base.position.set(x, 0.61, -Lb / 2 + 0.25)
-      const shade = new Mesh(new CylinderGeometry(0.1, 0.14, 0.17, 24, 1, true), new MeshStandardMaterial({ color: '#fff3df', emissive: '#ffc98a', emissiveIntensity: 1.4, side: DoubleSide, roughness: 0.9 }))
+      const shade = new Mesh(new CylinderGeometry(0.1, 0.14, 0.17, 24, 1, true), new MeshStandardMaterial({ color: '#fff3df', emissive: '#ffc98a', emissiveIntensity: 0.5, side: DoubleSide, roughness: 0.9 }))
       shade.position.set(x, 0.8, -Lb / 2 + 0.25)
       g.add(base, shade)
       if (!opts.lite && sx === 1) {
