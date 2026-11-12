@@ -148,6 +148,34 @@ export class GameController {
 
   setMyLook(look: CharacterLook) {
     this.dispatch({ type: 'look', look })
+    // A happy little hop so each pick feels alive (at most once a second).
+    const now = Date.now()
+    if (now - this.lastHop > 1000) {
+      this.lastHop = now
+      this.dispatch({ type: 'emote', emote: 'happy' })
+    }
+  }
+
+  private camGoal: { radius: number; beta: number; y: number; offsetY: number; alpha?: number; release?: boolean } | null = null
+  private savedCam: { radius: number; beta: number; alpha: number } | null = null
+  private lastHop = 0
+
+  /** Wardrobe close-up: zoom onto my character, who turns to face the camera. */
+  focusOnMe(on: boolean) {
+    const cam = this.bundle?.camera
+    if (!cam) return
+    if (on) {
+      this.savedCam = { radius: cam.radius, beta: cam.beta, alpha: cam.alpha }
+      cam.lowerRadiusLimit = 1.2
+      cam.upperBetaLimit = 1.5
+      // Character faces the camera: camera sits at angle alpha around the target.
+      const toCam = Math.atan2(Math.cos(cam.alpha), Math.sin(cam.alpha))
+      this.dispatch({ type: 'face', facing: toCam })
+      this.camGoal = { radius: 1.9, beta: 1.36, y: 0.55, offsetY: -0.45 }
+    } else {
+      const s = this.savedCam ?? { radius: 8, beta: 0.95, alpha: cam.alpha }
+      this.camGoal = { radius: s.radius, beta: s.beta, y: 0.6, offsetY: 0, release: true }
+    }
   }
 
   /** CSS-pixel position just above a character's head, for speech bubbles and wheels. */
@@ -199,10 +227,27 @@ export class GameController {
     this.render(this.sim.me, now)
     if (this.sim.partner) this.render(this.sim.partner, now)
     const me = this.sim.me
-    const target = b.camera.target
-    target.x += (me.pos.x - target.x) * Math.min(1, dt / 250)
-    target.z += (me.pos.z - target.z) * Math.min(1, dt / 250)
-    this.apt?.updateCutaway({ x: b.camera.position.x, z: b.camera.position.z }, me.pos)
+    const cam = b.camera
+    const target = cam.target
+    const k = Math.min(1, dt / 250)
+    target.x += (me.pos.x - target.x) * k
+    target.z += (me.pos.z - target.z) * k
+    // Ease the camera toward the wardrobe close-up (or back to the saved view).
+    const goal = this.camGoal
+    if (goal) {
+      const e = Math.min(1, dt / 220)
+      cam.radius += (goal.radius - cam.radius) * e
+      cam.beta += (goal.beta - cam.beta) * e
+      target.y += (goal.y - target.y) * e
+      cam.targetScreenOffset.y += (goal.offsetY - cam.targetScreenOffset.y) * e
+      if (goal.alpha !== undefined) cam.alpha += (goal.alpha - cam.alpha) * e
+      if (goal.release && Math.abs(goal.radius - cam.radius) < 0.02) {
+        cam.lowerRadiusLimit = 4
+        cam.upperBetaLimit = 1.2
+        this.camGoal = null
+      }
+    }
+    this.apt?.updateCutaway({ x: cam.position.x, z: cam.position.z }, me.pos)
     b.scene.render()
   }
 

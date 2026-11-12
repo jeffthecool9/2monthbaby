@@ -97,6 +97,21 @@ describe('M2 (re-graded): tapping an offline partner explains instead of doing n
   })
 })
 
+describe('wardrobe preview', () => {
+  test('turning to face the camera changes my facing and tells my partner via presence only', () => {
+    const { a } = pair()
+    const s = step(a, { type: 'face', facing: 1.2 }, 0)
+    expect(s.me.facing).toBeCloseTo(1.2)
+    expect(s.outbox).toHaveLength(0)
+  })
+  test('facing is ignored while walking or interacting', () => {
+    let { a } = pair()
+    a = step(a, { type: 'tap-floor', point: { x: 5, z: 4 } }, 0)
+    const s = step(a, { type: 'face', facing: 2 }, 1)
+    expect(s.me.facing).toBe(a.me.facing)
+  })
+})
+
 describe('M3 (re-graded): load errors are explained for a person, not a developer', () => {
   test('missing profile row → not-linked message', () => {
     expect(describeLoadError({ code: 'PGRST116' }).kind).toBe('not-linked')

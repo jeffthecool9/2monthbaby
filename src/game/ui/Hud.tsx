@@ -90,7 +90,10 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
       else if (e.type === 'wheel-furniture') {
         const f = FURNITURE.find((x) => x.id === e.id)
         if (f?.actions.length) setWheel({ at: e.screen, items: f.actions.map((a) => ACTION_ITEM[a]), furniture: e.id })
-      } else if (e.type === 'wardrobe') setWardrobe(controller.state.me.look)
+      } else if (e.type === 'wardrobe') {
+        setWardrobe(controller.state.me.look)
+        controller.focusOnMe(true)
+      }
       else if (e.type === 'partner-online') setToast(e.online ? `${e.name} is home 🏠` : `${e.name} went to sleep 😴`)
       else if (e.type === 'toast') setToast(e.text)
     })
@@ -112,6 +115,20 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
     <>
       <Bubbles controller={controller} />
       <SettingsButton />
+      {!wardrobe && controller && (
+        <button
+          type="button"
+          aria-label="Dress up"
+          className="fixed left-3 z-30 flex h-10 items-center gap-1 rounded-full bg-white/80 px-3 text-sm font-semibold text-[#7a3653] shadow"
+          style={{ top: 'calc(env(safe-area-inset-top) + 10px)' }}
+          onClick={() => {
+            setWardrobe(controller.state.me.look)
+            controller.focusOnMe(true)
+          }}
+        >
+          👗 Dress up
+        </button>
+      )}
       <ActionWheel at={wheel?.at ?? null} items={wheel?.items ?? []} onPick={pick} onClose={() => setWheel(null)} />
       {extra}
       <ChatBar
@@ -154,7 +171,10 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
               controller?.setMyLook(look)
               onLookChange?.(look)
             }}
-            onClose={() => setWardrobe(null)}
+            onClose={() => {
+              setWardrobe(null)
+              controller?.focusOnMe(false)
+            }}
           />
         )}
       </AnimatePresence>

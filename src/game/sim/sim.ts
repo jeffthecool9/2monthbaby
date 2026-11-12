@@ -70,6 +70,7 @@ export type SimEvent =
   | { type: 'presence'; others: PresenceState[] }
   | { type: 'interact'; kind: InteractionKind; id: string }
   | { type: 'tap-partner'; screen: { x: number; y: number } }
+  | { type: 'face'; facing: number }
   | { type: 'accept'; id: string }
   | { type: 'use-furniture'; id: FurnitureId; action: FurnitureAction }
   | { type: 'say'; text: string; id: string }
@@ -314,6 +315,9 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       const msg: InteractMsg = { t: 'interact', id: e.id, from: s.me.userId, to: p.userId, kind: e.kind, at: now }
       return startInteraction({ ...s, outbox: [...s.outbox, msg] }, msg, now)
     }
+    case 'face':
+      if (s.interaction || s.me.activity !== 'idle') return s
+      return { ...s, me: { ...s.me, facing: e.facing } }
     case 'tap-partner': {
       const p = s.partner
       if (!p) return s
