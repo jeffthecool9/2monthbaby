@@ -48,6 +48,7 @@ export type HudEvent =
   | { type: 'partner-online'; online: boolean; name: string }
   | { type: 'wardrobe' }
   | { type: 'toast'; text: string }
+  | { type: 'request-cancel' }
 
 export type SimState = {
   me: Avatar
@@ -56,6 +57,8 @@ export type SimState = {
   /** Interaction requests I sent while my partner was busy: id → kind. */
   outgoing: Record<string, InteractionKind>
   incoming: { id: string; kind: InteractionKind; from: UserId } | null
+  /** Latest presence from my partner's phone, reconciled whenever we're not simulating them. */
+  partnerPresence: PresenceState | null
   outbox: NetMsg[]
   hud: HudEvent[]
 }
@@ -66,6 +69,7 @@ export type SimEvent =
   | { type: 'net'; msg: NetMsg }
   | { type: 'presence'; others: PresenceState[] }
   | { type: 'interact'; kind: InteractionKind; id: string }
+  | { type: 'tap-partner'; screen: { x: number; y: number } }
   | { type: 'accept'; id: string }
   | { type: 'use-furniture'; id: FurnitureId; action: FurnitureAction }
   | { type: 'say'; text: string; id: string }
@@ -91,7 +95,7 @@ export function createSim(me: Identity, start: Vec2, partner: Identity | null): 
   return {
     me: avatar(me, start, true),
     partner: partner ? asleep(avatar(partner, bedSpot(partner.role), false), false) : null,
-    interaction: null, outgoing: {}, incoming: null, outbox: [], hud: [],
+    interaction: null, outgoing: {}, incoming: null, partnerPresence: null, outbox: [], hud: [],
   }
 }
 
@@ -147,12 +151,29 @@ function startInteraction(s: SimState, msg: InteractMsg, now: number): SimState 
   const go = (a: Avatar, spot: Vec2) => (dist(a.pos, spot) < 0.05 ? { ...a, path: [], furniture: undefined } : walkTo(a, spot, now))
   const ini = { ...go(initiator, plan.initiatorSpot), then: undefined, activity: 'interacting' as Activity }
   const rec = { ...go(receiver, plan.partnerSpot), then: undefined, activity: 'interacting' as Activity }
+  // Any interaction supersedes pending requests in both directions.
+  const hadRequest = !!s.incoming
   return {
     ...s,
     me: iAmInitiator ? ini : rec,
     partner: iAmInitiator ? rec : ini,
     interaction: { id: msg.id, kind: msg.kind, initiator: msg.from, at: msg.at, plan, phase: 'approach', phaseStart: now },
+    incoming: null,
+    outgoing: {},
+    hud: hadRequest ? [...s.hud, { type: 'request-cancel' }] : s.hud,
   }
+}
+
+const clipFor = (a: Activity): ClipName => (a === 'sleeping' ? 'sleep' : a === 'sitting' ? 'sit' : 'idle')
+
+/** Snap my partner to what their own phone says, unless I'm currently animating them. */
+function reconcilePartner(s: SimState, now: number): SimState {
+  const p = s.partnerPresence, partner = s.partner
+  if (!p || !partner || !partner.online || s.interaction || partner.path.length) return s
+  const activity = p.activity === 'walking' ? 'idle' : p.activity
+  if (dist(partner.pos, p.pos) <= SNAP_DISTANCE && activity === partner.activity && p.furniture === partner.furniture) return s
+  if (activity === partner.activity && activity === 'idle' && dist(partner.pos, p.pos) <= SNAP_DISTANCE) return s
+  return { ...s, partner: { ...partner, pos: { ...p.pos }, facing: p.facing, activity, furniture: p.furniture, clip: clipFor(activity), clipStart: now } }
 }
 
 function endInteraction(s: SimState, now: number): SimState {
@@ -191,21 +212,18 @@ function onPresence(s: SimState, others: PresenceState[], now: number): SimState
   const p = others.find((o) => o.userId === s.partner!.userId)
   if (!p) {
     if (!s.partner.online) return s
-    const next = { ...s, partner: asleep(s.partner, false), hud: [...s.hud, { type: 'partner-online' as const, online: false, name: s.partner.name }] }
+    const next = { ...s, partnerPresence: null, partner: asleep(s.partner, false), hud: [...s.hud, { type: 'partner-online' as const, online: false, name: s.partner.name }] }
     return next.interaction ? endInteraction(next, now) : next
   }
   let partner: Avatar = { ...s.partner, name: p.name, look: p.look }
   const hud = [...s.hud]
   if (!s.partner.online) {
-    partner = { ...partner, online: true, pos: { ...p.pos }, facing: p.facing, activity: p.activity, path: [], clip: p.activity === 'sleeping' ? 'sleep' : p.activity === 'sitting' ? 'sit' : 'idle', clipStart: now, furniture: p.furniture }
+    const activity = p.activity === 'walking' ? 'idle' : p.activity
+    partner = { ...partner, online: true, pos: { ...p.pos }, facing: p.facing, activity, path: [], clip: clipFor(activity), clipStart: now, furniture: p.furniture }
     hud.push({ type: 'partner-online', online: true, name: p.name })
-  } else if (!s.interaction && !partner.path.length) {
-    // Trust their own phone for where they are when they're not walking a path we know about.
-    if (dist(partner.pos, p.pos) > SNAP_DISTANCE || p.activity !== partner.activity) {
-      partner = { ...partner, pos: { ...p.pos }, facing: p.facing, activity: p.activity === 'walking' ? 'idle' : p.activity, furniture: p.furniture, clip: p.activity === 'sleeping' ? 'sleep' : p.activity === 'sitting' ? 'sit' : 'idle', clipStart: now }
-    }
   }
-  return { ...s, partner, hud }
+  // Keep the latest report; it's applied now or as soon as my copy of their walk ends.
+  return reconcilePartner({ ...s, partner, hud, partnerPresence: p }, now)
 }
 
 function onNet(s: SimState, msg: NetMsg, now: number): SimState {
@@ -225,14 +243,14 @@ function onNet(s: SimState, msg: NetMsg, now: number): SimState {
         if (winner === mine) return s
         return startInteraction(endInteraction(s, now), msg, now)
       }
-      return startInteraction({ ...s, incoming: null }, msg, now)
+      return startInteraction(s, msg, now)
     }
     case 'interact-request':
       if (msg.to !== s.me.userId) return s
       return { ...s, incoming: { id: msg.id, kind: msg.kind, from: msg.from }, hud: [...s.hud, { type: 'request', id: msg.id, from: partner.name, kind: msg.kind }] }
     case 'interact-accept': {
       const kind = s.outgoing[msg.id]
-      if (!kind) return s
+      if (!kind || s.interaction) return s
       const { [msg.id]: _, ...outgoing } = s.outgoing
       const im: InteractMsg = { t: 'interact', id: msg.id, from: s.me.userId, to: partner.userId, kind, at: now }
       return startInteraction({ ...s, outgoing, outbox: [...s.outbox, im] }, im, now)
@@ -268,7 +286,7 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       }
       me = settle(me)
       partner = partner ? settle(partner) : null
-      return tickInteraction({ ...s, me, partner }, now)
+      return reconcilePartner(tickInteraction({ ...s, me, partner }, now), now)
     }
     case 'tap-floor': {
       if (s.interaction) return s
@@ -296,8 +314,14 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       const msg: InteractMsg = { t: 'interact', id: e.id, from: s.me.userId, to: p.userId, kind: e.kind, at: now }
       return startInteraction({ ...s, outbox: [...s.outbox, msg] }, msg, now)
     }
+    case 'tap-partner': {
+      const p = s.partner
+      if (!p) return s
+      if (!p.online) return { ...s, hud: [...s.hud, { type: 'toast', text: `${p.name} is asleep right now 😴` }] }
+      return { ...s, hud: [...s.hud, { type: 'wheel-partner', screen: e.screen }] }
+    }
     case 'accept': {
-      if (!s.incoming || s.incoming.id !== e.id) return s
+      if (!s.incoming || s.incoming.id !== e.id || s.interaction) return s
       const me: Avatar = { ...s.me, activity: 'idle', clip: 'idle', clipStart: now, furniture: undefined, pos: s.me.furniture ? grid.nearestWalkable(s.me.pos) : s.me.pos }
       return { ...s, me, incoming: null, outbox: [...s.outbox, { t: 'interact-accept', id: e.id, from: s.me.userId }] }
     }

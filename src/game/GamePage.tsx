@@ -15,6 +15,7 @@ import { LoginScreen } from './ui/LoginScreen'
 import type { LogLine } from './ui/ChatLog'
 import { BirthdayBanner } from './ui/BirthdayBanner'
 import { HER_BIRTHDAY, isBirthdayKL } from './sim/birthday'
+import { describeLoadError, setupKey, type LoadError } from './sessionSetup'
 
 const LOCAL_PEOPLE: Record<'her' | 'him', Identity> = {
   her: { userId: 'local-her', name: 'Her', role: 'female', look: defaultLook('female') },
@@ -83,7 +84,10 @@ export default function GamePage() {
   const local = params.has('local') || (import.meta.env.DEV && !supabase && params.has('as'))
   const [session, setSession] = useState<Session | null | undefined>(undefined)
   const [setup, setSetup] = useState<Setup | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<LoadError | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  // A new session object arrives on every unlock / token refresh; only a different user rebuilds the game.
+  const userKey = setupKey(session)
 
   // Local tab-to-tab mode: no accounts needed.
   useEffect(() => {
@@ -100,8 +104,12 @@ export default function GamePage() {
   }, [local])
 
   useEffect(() => {
-    if (local || !supabase || !session) return
+    if (local || !supabase || !userKey) {
+      if (!local) setSetup(null)
+      return
+    }
     let cancelled = false
+    setError(null)
     ;(async () => {
       try {
         const me = await loadMyProfile(supabase)
@@ -116,18 +124,28 @@ export default function GamePage() {
         })
       } catch (err) {
         console.error(err)
-        if (!cancelled) setError('Your account isn’t linked to a home yet. Run the seed step in docs/SETUP-couple-home.md.')
+        if (!cancelled) setError(describeLoadError(err))
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [local, session])
+  }, [local, userKey, attempt])
 
   if (setup) return <Game setup={setup} />
   if (local) return <Screen>Loading our home…</Screen>
   if (!supabase) return <Screen><p className="text-lg font-semibold">Our home isn’t connected yet 🏗️</p><p className="mt-2 text-sm opacity-80">Follow docs/SETUP-couple-home.md to connect Supabase.</p></Screen>
-  if (error) return <Screen><p>{error}</p></Screen>
+  if (error) {
+    return (
+      <Screen>
+        <p className="text-lg">{error.message}</p>
+        <button type="button" className="mt-5 h-11 rounded-full bg-gradient-to-br from-[#ff8fb3] to-[#ff6f9c] px-6 font-semibold text-white" onClick={() => setAttempt((n) => n + 1)}>Try again</button>
+        {error.kind === 'not-linked' && (
+          <button type="button" className="mt-3 block w-full text-sm underline opacity-80" onClick={() => void supabase!.auth.signOut()}>Use a different account</button>
+        )}
+      </Screen>
+    )
+  }
   if (session === undefined) return <Screen>Loading our home…</Screen>
   if (!session) return <div style={{ fontFamily: GAME_FONT }}><LoginScreen client={supabase} /></div>
   return <Screen>Loading our home…</Screen>

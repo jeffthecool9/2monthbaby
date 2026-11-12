@@ -54,13 +54,24 @@ export class GameController {
     if (this.birthdayName) addBirthdayDecor(bundle.scene, this.birthdayName)
     this.unsubs.push(this.room.onMessage((msg) => this.dispatch({ type: 'net', msg })))
     this.unsubs.push(this.room.onPresence((others) => this.dispatch({ type: 'presence', others })))
-    await this.room.join({ ...this.meStart })
+    // Show the home right away; connecting happens alongside (and retries on bad 4G).
     bundle.scene.onPointerObservable.add((info) => this.onPointer(info))
-    this.lastFrame = performance.now()
+    this.lastFrame = Date.now()
     bundle.engine.runRenderLoop(() => this.frame())
     const onResize = () => bundle.engine.resize()
     window.addEventListener('resize', onResize)
     this.unsubs.push(() => window.removeEventListener('resize', onResize))
+    void this.connect()
+
+    // Closing the tab or swiping the app away: tell the partner straight away.
+    const onPageHide = () => void this.room.leave()
+    const onPageShow = (e: PageTransitionEvent) => e.persisted && void this.connect()
+    window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('pageshow', onPageShow)
+    this.unsubs.push(() => {
+      window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('pageshow', onPageShow)
+    })
 
     // iPhone: locking the phone or switching apps suspends the page. Stop rendering and
     // reconnect on return so we reappear for each other without a reload.
@@ -70,7 +81,7 @@ export class GameController {
         this.room.pause()
       } else {
         void this.room.resume()
-        this.lastFrame = performance.now()
+        this.lastFrame = Date.now()
         bundle.engine.stopRenderLoop()
         bundle.engine.runRenderLoop(() => this.frame())
       }
@@ -83,6 +94,25 @@ export class GameController {
     bundle.engine.onContextRestoredObservable.add(() => {
       for (const entry of this.chibis.values()) entry.expr = ''
     })
+  }
+
+  private async connect() {
+    while (!this.disposed) {
+      try {
+        await this.room.join({ ...this.meStart, ...this.presenceNow() })
+        if (this.disposed) void this.room.leave()
+        return
+      } catch {
+        if (this.disposed) return
+        this.emitHud({ type: 'toast', text: 'Can’t reach our home… retrying 💗' })
+        await new Promise((r) => setTimeout(r, 5000))
+      }
+    }
+  }
+
+  private presenceNow(): Partial<PresenceState> {
+    const me = this.sim.me
+    return { pos: me.pos, facing: me.facing, activity: me.activity, look: me.look, furniture: me.furniture }
   }
 
   onHud(cb: (e: HudEvent) => void): () => void {
@@ -142,7 +172,7 @@ export class GameController {
   }
 
   private dispatch(e: SimEvent) {
-    this.sim = step(this.sim, e, performance.now())
+    this.sim = step(this.sim, e, Date.now())
     this.flush()
   }
 
@@ -162,7 +192,7 @@ export class GameController {
 
   private frame() {
     const b = this.bundle!
-    const now = performance.now()
+    const now = Date.now()
     const dt = Math.min(100, now - this.lastFrame)
     this.lastFrame = now
     this.dispatch({ type: 'tick', dt })
@@ -227,7 +257,7 @@ export class GameController {
     if (!pick?.hit || !meta) return
     const screen = { x: ev.clientX - rect.left, y: ev.clientY - rect.top }
     if (meta.kind === 'floor' && pick.pickedPoint) this.dispatch({ type: 'tap-floor', point: { x: pick.pickedPoint.x, z: pick.pickedPoint.z } })
-    else if (meta.kind === 'character' && meta.userId && meta.userId !== this.sim.me.userId) this.emitHud({ type: 'wheel-partner', screen })
+    else if (meta.kind === 'character' && meta.userId && meta.userId !== this.sim.me.userId) this.dispatch({ type: 'tap-partner', screen })
     else if (meta.kind === 'furniture' && meta.id) this.emitHud({ type: 'wheel-furniture', id: meta.id, screen })
   }
 

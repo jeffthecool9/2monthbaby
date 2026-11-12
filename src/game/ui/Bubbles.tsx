@@ -24,6 +24,7 @@ export function Bubbles({ controller }: { controller: GameController | null }) {
         const b: Bubble = { userId: e.userId, text: e.text, until: Date.now() + BUBBLE_MS, key: ++seq.current }
         setBubbles((list) => [...list.filter((x) => x.userId !== e.userId), b])
       } else if (e.type === 'request') setRequest({ id: e.id, from: e.from, kind: e.kind })
+      else if (e.type === 'request-cancel') setRequest(null)
     })
   }, [controller])
 
