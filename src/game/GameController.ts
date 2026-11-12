@@ -11,6 +11,9 @@ import { choreProps, type ChoreProps } from './three/props'
 import { ACTIVITIES, type ActivityId } from './play/minigame'
 import { MISSIONS } from './play/economy'
 import { FURNITURE } from './world/layout'
+import { CATALOG, applyDecor, canPlace, emptyDecor, nearestWall, type CatalogItem, type DecorChange, type DecorState } from './play/decor'
+import { buildDecor, type DecorModel } from './three/decorModels'
+import { Color, Group, Plane, MeshStandardMaterial, type Mesh } from 'three'
 import { daylight, klClock } from './world/daylight'
 import { classifyGesture, type PointerSample } from './input/gesture'
 import { cleanChat, type GameId, type GameOp, type PresenceState } from './net/protocol'
@@ -28,6 +31,8 @@ export type GameOptions = {
   birthdayName?: string | null
   /** Turns a stored avatar path into a loadable (signed) URL; without it, placeholders are used. */
   resolveAvatar?: (path: string) => Promise<string>
+  /** Called with every decoration change I make, so it can be saved. */
+  onDecor?: (change: DecorChange) => void
 }
 
 type CamGoal = { radius: number; phi: number; y: number; offsetY: number; release?: boolean }
@@ -71,6 +76,14 @@ export class GameController {
   private watching = false
   private fpDrag: { x: number; y: number } | null = null
   private savedOffset: Vector3 | null = null
+  /** Shared decoration: what's placed where, and the models for it. */
+  private decor: DecorState = emptyDecor()
+  private decorModels = new Map<string, DecorModel>()
+  /** An item being placed or moved: a ghost that follows the finger. */
+  private placing: { item: CatalogItem; uid: string; x: number; z: number; rot: number; ok: boolean; ghost: Group; existing: boolean; owner: string } | null = null
+  private floorPlane = new Plane(new Vector3(0, 1, 0), 0)
+  /** Decorate mode: tapping a placed item picks it up instead of walking. */
+  decorateMode = false
 
   constructor(canvas: HTMLCanvasElement, room: Room, me: PresenceState, partnerHint: Identity | null, opts: GameOptions = {}) {
     this.canvas = canvas
@@ -331,6 +344,167 @@ export class GameController {
     return { eye, look: eye.clone().add(yawed) }
   }
 
+  // ── Shop & decorate ──────────────────────────────────────
+  loadDecor(state: DecorState) {
+    this.decor = state
+    for (const p of Object.values(state.items)) this.showDecor(p.uid)
+  }
+
+  get decorState(): DecorState {
+    return this.decor
+  }
+
+  private applyDecorChange(change: DecorChange) {
+    const before = this.decor
+    this.decor = applyDecor(this.decor, change)
+    if (this.decor === before) return
+    if (change.op === 'remove') this.hideDecor(change.uid)
+    else this.showDecor(change.uid)
+  }
+
+  private showDecor(uid: string) {
+    const p = this.decor.items[uid]
+    const stage = this.stage
+    if (!p || !stage) return
+    let m = this.decorModels.get(uid)
+    if (!m) {
+      m = buildDecor(p.item, this.opts.lite)
+      this.decorModels.set(uid, m)
+      stage.scene.add(m.group)
+      m.group.traverse((o) => Object.assign(o.userData, { kind: 'decor', uid }))
+    }
+    const item = CATALOG.find((c) => c.id === p.item)!
+    m.group.position.set(p.x, item.wall ? 1.55 : 0, p.z)
+    m.group.rotation.y = p.rot
+  }
+
+  private hideDecor(uid: string) {
+    const m = this.decorModels.get(uid)
+    if (!m) return
+    m.group.removeFromParent()
+    this.decorModels.delete(uid)
+  }
+
+  private nextSeq() {
+    return Math.max(this.decor.seq, Date.now()) + 1
+  }
+
+  private commitDecor(change: DecorChange) {
+    this.applyDecorChange(change)
+    this.room.send({ t: 'decor', from: this.sim.me.userId, change, at: Date.now() })
+    this.opts.onDecor?.(change)
+  }
+
+  /** Start placing a bought item (or moving an existing one). The ghost appears in front of me. */
+  startPlacing(itemId: string, existingUid?: string) {
+    const stage = this.stage
+    const item = CATALOG.find((c) => c.id === itemId)
+    if (!stage || !item) return
+    this.cancelPlacing()
+    const prev = existingUid ? this.decor.items[existingUid] : null
+    if (prev) this.hideDecor(existingUid!)
+    const me = this.sim.me
+    const ahead = { x: me.pos.x + Math.sin(me.facing) * 1.1, z: me.pos.z + Math.cos(me.facing) * 1.1 }
+    const ghost = buildDecor(item.id, true).group
+    ghost.traverse((o) => {
+      const mesh = o as Mesh
+      if (mesh.isMesh) {
+        const mat = (mesh.material as MeshStandardMaterial).clone()
+        mat.transparent = true
+        mat.opacity = 0.75
+        mesh.material = mat
+        mesh.castShadow = false
+      }
+    })
+    stage.scene.add(ghost)
+    this.placing = { item, uid: existingUid ?? `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, x: prev?.x ?? ahead.x, z: prev?.z ?? ahead.z, rot: prev?.rot ?? 0, ok: false, ghost, existing: !!prev, owner: prev?.owner ?? me.userId }
+    this.movePlacing(this.placing.x, this.placing.z)
+    // New item: start it on the nearest free spot around me rather than inside a wall.
+    if (!prev && !this.placing.ok) {
+      const placed = Object.values(this.decor.items)
+      outer: for (let r = 0.6; r <= 3; r += 0.4) {
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
+          const x = me.pos.x + Math.sin(a) * r, z = me.pos.z + Math.cos(a) * r
+          const spot = item.wall ? nearestWall({ x, z }) : { x, z }
+          if (spot && canPlace(item, spot, placed)) {
+            this.movePlacing(x, z)
+            break outer
+          }
+        }
+      }
+    }
+  }
+
+  get placingInfo() {
+    return this.placing ? { item: this.placing.item, ok: this.placing.ok, existing: this.placing.existing } : null
+  }
+
+  private movePlacing(x: number, z: number) {
+    const p = this.placing
+    if (!p) return
+    if (p.item.wall) {
+      const w = nearestWall({ x, z })
+      if (w) {
+        p.x = w.x; p.z = w.z; p.rot = w.rot
+      } else {
+        p.x = x; p.z = z
+      }
+    } else {
+      p.x = x; p.z = z
+    }
+    p.ok = canPlace(p.item, { x: p.x, z: p.z }, Object.values(this.decor.items), p.uid)
+    p.ghost.position.set(p.x, p.item.wall ? 1.55 : 0.02, p.z)
+    p.ghost.rotation.y = p.rot
+    const tint = p.ok ? new Color('#9fe8b0') : new Color('#ff8a8a')
+    p.ghost.traverse((o) => {
+      const m = (o as Mesh).material as MeshStandardMaterial | undefined
+      if (m && 'emissive' in m) {
+        m.emissive.copy(tint)
+        m.emissiveIntensity = 0.45
+      }
+    })
+  }
+
+  rotatePlacing() {
+    const p = this.placing
+    if (!p || p.item.wall) return
+    p.rot += Math.PI / 4
+    this.movePlacing(p.x, p.z)
+  }
+
+  /** Put it down. Returns the change made, or null if it doesn't fit there. */
+  confirmPlacing(): DecorChange | null {
+    const p = this.placing
+    if (!p || !p.ok) return null
+    const change: DecorChange = p.existing
+      ? { op: 'move', uid: p.uid, x: p.x, z: p.z, rot: p.rot, seq: this.nextSeq() }
+      : { op: 'place', uid: p.uid, item: p.item.id, x: p.x, z: p.z, rot: p.rot, owner: p.owner, seq: this.nextSeq() }
+    p.ghost.removeFromParent()
+    this.placing = null
+    this.commitDecor(change)
+    return change
+  }
+
+  cancelPlacing() {
+    const p = this.placing
+    if (!p) return
+    p.ghost.removeFromParent()
+    this.placing = null
+    if (p.existing) this.showDecor(p.uid)
+  }
+
+  /** Sell an item back (the shop refunds half). */
+  removeDecor(uid: string): CatalogItem | null {
+    const p = this.decor.items[uid]
+    if (!p) return null
+    if (this.placing?.uid === uid) {
+      this.placing.ghost.removeFromParent()
+      this.placing = null
+    }
+    this.commitDecor({ op: 'remove', uid, seq: this.nextSeq() })
+    return CATALOG.find((c) => c.id === p.item) ?? null
+  }
+
   /** Wardrobe close-up: zoom onto my character, who turns to face the camera. */
   focusOnMe(on: boolean) {
     const stage = this.stage
@@ -382,6 +556,7 @@ export class GameController {
     for (const m of outbox) this.room.send(m)
     for (const h of hud) {
       if (h.type === 'activity') this.beginActivity(h.activity, h.furniture, h.mission)
+      if (h.type === 'decor') this.applyDecorChange(h.change)
       for (const cb of this.hudListeners) cb(h)
     }
     // Standing up (exit, finish, walking away) ends the hands-on view.
@@ -458,6 +633,7 @@ export class GameController {
       this.city?.setDaylight(d)
       this.apt?.setDaylight(d)
     }
+    for (const m of this.decorModels.values()) m.update?.(now)
     this.apt?.update(dt, now)
     this.city?.update(dt, now)
     this.birthday?.update(now)
@@ -520,7 +696,36 @@ export class GameController {
     entry.avatar.update(dt)
   }
 
+  private floorPoint(ev: PointerEvent): { x: number; z: number } | null {
+    const stage = this.stage
+    if (!stage) return null
+    const rect = this.canvas.getBoundingClientRect()
+    const ndc = new Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1)
+    this.raycaster.setFromCamera(ndc, stage.camera)
+    const hit = new Vector3()
+    return this.raycaster.ray.intersectPlane(this.floorPlane, hit) ? { x: hit.x, z: hit.z } : null
+  }
+
   private onPointer(kind: 'down' | 'up', ev: PointerEvent) {
+    // Placing: the ghost follows the finger while it's down.
+    if (this.placing) {
+      if (kind === 'down') {
+        const stage = this.stage!
+        stage.controls.enabled = false
+        const move = (e: PointerEvent) => {
+          const f = this.floorPoint(e)
+          if (f) this.movePlacing(f.x, f.z)
+        }
+        const up = () => {
+          stage.controls.enabled = true
+          window.removeEventListener('pointermove', move)
+        }
+        move(ev)
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up, { once: true })
+      }
+      return
+    }
     if (this.fp && !this.watching) {
       if (kind === 'down') {
         this.fpDrag = { x: ev.clientX, y: ev.clientY }
@@ -559,11 +764,16 @@ export class GameController {
     const rect = this.canvas.getBoundingClientRect()
     const ndc = new Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1)
     this.raycaster.setFromCamera(ndc, stage.camera)
-    const targets: Object3D[] = [...(this.apt ? [this.apt.root] : []), ...[...this.avatars.values()].map((e) => e.avatar.root)]
+    const targets: Object3D[] = [...(this.apt ? [this.apt.root] : []), ...[...this.avatars.values()].map((e) => e.avatar.root), ...[...this.decorModels.values()].map((m) => m.group)]
     const hit = this.raycaster.intersectObjects(targets, true).find((h) => h.object.visible && h.object.userData.kind)
     if (!hit) return
-    const meta = hit.object.userData as { kind: string; id?: FurnitureId; userId?: UserId }
+    const meta = hit.object.userData as { kind: string; id?: FurnitureId; userId?: UserId; uid?: string }
     const screen = { x: ev.clientX - rect.left, y: ev.clientY - rect.top }
+    if (meta.kind === 'decor' && meta.uid) {
+      if (this.decorateMode) this.emitHud({ type: 'decor-pick', uid: meta.uid, screen })
+      return
+    }
+    if (this.decorateMode) return
     if (meta.kind === 'floor') this.dispatch({ type: 'tap-floor', point: { x: hit.point.x, z: hit.point.z } })
     else if (meta.kind === 'character' && meta.userId && meta.userId !== this.sim.me.userId) this.dispatch({ type: 'tap-partner', screen })
     else if (meta.kind === 'furniture' && meta.id) this.emitHud({ type: 'wheel-furniture', id: meta.id, screen })

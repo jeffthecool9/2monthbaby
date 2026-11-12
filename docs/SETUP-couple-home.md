@@ -39,7 +39,11 @@ Left menu → **Authentication** → **Sign In / Providers** → **Email**: keep
 
 (For running locally, put the same two lines in a `.env` file in the project folder.)
 
-## 7. Done
+## 7. Later updates
+
+When the game gains features that need the database, run the new file in `supabase/migrations/` (in number order) the same way as step 2. So far: `0002_avatars.sql` (your own VRoid character), `0003_wallets.sql` (coins), `0004_decor.sql` (shop & decorating).
+
+## 8. Done
 
 Open your Sweet Paradise address on both iPhones, log in, and tap **Share → Add to Home Screen** for a full-screen app icon.
 

@@ -9,6 +9,7 @@ import { NavGrid } from '../world/navgrid'
 import type { ActionKind, Activity, EmoteKind, InteractionKind, Role, SoloClip, UserId, Vec2 } from '../types'
 import { MISSIONS, affectionReward, missionReady, type Mission } from '../play/economy'
 import { activityFor, type ActivityId } from '../play/minigame'
+import type { DecorChange } from '../play/decor'
 import { INTERACTION_DURATION, facingTo, needsRequest, planInteraction, resolveCrossing, type InteractMsg, type Plan } from './interactions'
 
 export const WALK_SPEED = 1.6 // m/s
@@ -62,6 +63,8 @@ export type HudEvent =
   | { type: 'earn'; amount: number; reason: string }
   | { type: 'activity'; activity: ActivityId; furniture: FurnitureId; mission?: string }
   | { type: 'game'; msg: Extract<NetMsg, { t: 'game' }> }
+  | { type: 'decor'; change: DecorChange }
+  | { type: 'decor-pick'; uid: string; screen: { x: number; y: number } }
 
 export type SimState = {
   me: Avatar
@@ -315,6 +318,8 @@ function onNet(s: SimState, msg: NetMsg, now: number): SimState {
       return { ...s, partner: { ...partner, look: msg.look } }
     case 'game':
       return { ...s, hud: [...s.hud, { type: 'game', msg }] }
+    case 'decor':
+      return { ...s, hud: [...s.hud, { type: 'decor', change: msg.change }] }
     case 'act':
       if (s.interaction || partner.activity === 'walking') return s
       return { ...s, partner: { ...partner, activity: 'idle', clip: msg.clip, clipStart: now } }

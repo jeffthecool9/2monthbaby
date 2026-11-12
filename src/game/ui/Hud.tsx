@@ -8,6 +8,7 @@ import { RadialMenu } from './RadialMenu'
 import { ActivityScreen } from './Activity'
 import type { ActivityId } from '../play/minigame'
 import { CoinPill, Games } from './Games'
+import { Shop } from './Shop'
 import { MISSIONS, type Wallet } from '../play/economy'
 import { ActionWheel, type WheelItem } from './ActionWheel'
 import { Bubbles } from './Bubbles'
@@ -64,13 +65,15 @@ function SettingsButton() {
   )
 }
 
-export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, wallet = null, lastGain = null, history = [], extra }: {
+export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, onSpend, wallet = null, lastGain = null, history = [], extra }: {
   controller: GameController | null
   onLookChange?: (look: CharacterLook) => void
   /** Upload a VRoid .vrm as my character (only when connected to Supabase). */
   onUploadAvatar?: (file: File) => Promise<void>
   /** Coins earned (missions, affection, games). */
   onEarn?: (amount: number, reason: string) => void
+  /** Pay coins in the shop; resolves false when I can't afford it. */
+  onSpend?: (amount: number, reason: string) => Promise<boolean>
   wallet?: Wallet | null
   lastGain?: { amount: number; key: number } | null
   /** Called with each chat message I send (after cleaning), e.g. to save it. */
@@ -166,6 +169,7 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, w
       {!activity && <SettingsButton />}
       {!activity && <CoinPill wallet={wallet} lastGain={lastGain} />}
       <Games controller={controller} onEarn={earn} hidden={!!wardrobe || !!activity} />
+      <Shop controller={controller} wallet={wallet} onSpend={onSpend ?? (async () => false)} onRefund={earn} hidden={!!wardrobe || !!activity} />
       <AnimatePresence>
         {activity && controller && (
           <ActivityScreen

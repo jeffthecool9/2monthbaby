@@ -1,5 +1,6 @@
 import { LOOK_OPTIONS, type CharacterLook } from '../character/look'
 import type { FurnitureId } from '../world/layout'
+import { CATALOG_IDS, type DecorChange } from '../play/decor'
 import type { Activity, EmoteKind, InteractionKind, Role, SoloClip, UserId, Vec2 } from '../types'
 
 export type PresenceState = {
@@ -26,6 +27,7 @@ export type NetMsg =
   | { t: 'look'; from: UserId; look: CharacterLook }
   | { t: 'act'; from: UserId; clip: SoloClip; at: number }
   | { t: 'game'; from: UserId; game: GameId; op: GameOp; id: string; value?: number; at: number }
+  | { t: 'decor'; from: UserId; change: DecorChange; at: number }
 
 export type GameId = 'ttt' | 'tot'
 export type GameOp = 'invite' | 'accept' | 'decline' | 'move' | 'next' | 'quit'
@@ -74,6 +76,17 @@ export function parsePresence(x: unknown): PresenceState | null {
   return out
 }
 
+export function parseDecorChange(x: unknown): DecorChange | null {
+  if (!x || typeof x !== 'object') return null
+  const c = x as Record<string, unknown>
+  if (!isStr(c.uid) || !isNum(c.seq)) return null
+  if (c.op === 'remove') return { op: 'remove', uid: c.uid, seq: c.seq }
+  if (!isNum(c.x) || !isNum(c.z) || !isNum(c.rot)) return null
+  if (c.op === 'move') return { op: 'move', uid: c.uid, x: c.x, z: c.z, rot: c.rot, seq: c.seq }
+  if (c.op === 'place' && isStr(c.item) && CATALOG_IDS.has(c.item) && isStr(c.owner)) return { op: 'place', uid: c.uid, item: c.item, x: c.x, z: c.z, rot: c.rot, owner: c.owner, seq: c.seq }
+  return null
+}
+
 export function parseMsg(x: unknown): NetMsg | null {
   if (!x || typeof x !== 'object') return null
   const m = x as Record<string, unknown>
@@ -105,6 +118,10 @@ export function parseMsg(x: unknown): NetMsg | null {
       const out: NetMsg = { t: 'game', from: m.from, game: m.game as GameId, op: m.op as GameOp, id: m.id, at: m.at }
       if (isNum(m.value)) out.value = m.value
       return out
+    }
+    case 'decor': {
+      const c = parseDecorChange(m.change)
+      return isStr(m.from) && isNum(m.at) && c ? { t: 'decor', from: m.from, change: c, at: m.at } : null
     }
     case 'act':
       return isStr(m.from) && isNum(m.at) && SOLO_CLIPS.includes(m.clip as SoloClip) ? { t: 'act', from: m.from, clip: m.clip as SoloClip, at: m.at } : null
