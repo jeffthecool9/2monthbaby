@@ -57,7 +57,10 @@ export class Chibi {
 
   setLook(look: CharacterLook) {
     this.look = look
-    for (const child of this.parts.getChildren()) child.dispose(false, true)
+    // Keep the shared face texture alive: free materials but not textures.
+    for (const m of this.mats) m.dispose(false, false)
+    this.mats = []
+    for (const child of this.parts.getChildren()) child.dispose(false, false)
     this.build()
     this.tagMeshes()
   }
@@ -115,8 +118,11 @@ export class Chibi {
     }
   }
 
+  private mats: PBRMaterial[] = []
+
   private mat(name: string, hex: string, roughness = 0.55, sheen = 0.25): PBRMaterial {
     const m = new PBRMaterial(`chibi-${name}`, this.scene)
+    this.mats.push(m)
     m.albedoColor = Color3.FromHexString(hex).toLinearSpace()
     m.roughness = roughness
     m.metallic = 0
@@ -224,6 +230,7 @@ export class Chibi {
     facePlane.position.set(0, HEAD_R * 0.8, HEAD_R + 0.006)
     facePlane.rotation.y = Math.PI
     const faceMat = new PBRMaterial('chibi-face', s)
+    this.mats.push(faceMat)
     faceMat.albedoTexture = this.face
     faceMat.useAlphaFromAlbedoTexture = true
     faceMat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATEST

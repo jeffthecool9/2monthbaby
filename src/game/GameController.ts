@@ -194,8 +194,8 @@ export class GameController {
   private onTap(ev: PointerEvent) {
     const b = this.bundle!
     const rect = this.canvas.getBoundingClientRect()
-    const scale = b.engine.getRenderWidth() / rect.width
-    const pick = b.scene.pick((ev.clientX - rect.left) * scale, (ev.clientY - rect.top) * scale, (m) => m.isPickable && !!m.metadata?.kind)
+    // scene.pick takes CSS pixels; Babylon applies the hardware scaling (retina) itself.
+    const pick = b.scene.pick(ev.clientX - rect.left, ev.clientY - rect.top, (m) => m.isPickable && !!m.metadata?.kind)
     const meta = pick?.pickedMesh?.metadata as { kind?: string; id?: FurnitureId; userId?: UserId } | undefined
     if (!pick?.hit || !meta) return
     const screen = { x: ev.clientX - rect.left, y: ev.clientY - rect.top }
