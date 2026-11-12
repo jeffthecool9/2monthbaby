@@ -6,8 +6,7 @@ import {
 } from 'three'
 import { UNIT } from '../world/layout'
 
-/** Our floor is ~28 storeys up; the street is this far below. */
-const GROUND_Y = -84
+import { GROUND_Y, buildStreets } from './streets'
 const CENTRE = new Vector3(UNIT.width / 2, 0, UNIT.depth / 2)
 
 function rng(seed: number) {
@@ -81,15 +80,14 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
   sky.position.copy(CENTRE)
   root.add(sky)
 
-  // Street level far below: dark ground with a glowing road grid.
-  const ground = new Mesh(new PlaneGeometry(900, 900), new MeshStandardMaterial({ color: '#1f1a2b', roughness: 1 }))
-  ground.rotation.x = -Math.PI / 2
-  ground.position.set(CENTRE.x, GROUND_Y, CENTRE.z)
-  root.add(ground)
+  // Street level: roads, cars, park, shops and lights.
+  const streets = buildStreets(opts)
+  root.add(streets.root)
+  movers.push(streets.update)
 
   // Towers: instanced boxes in rings around us, three facade styles.
   const styles = [0, 1, 2].map((i) => facadeTextures(100 + i))
-  const count = opts.lite ? 220 : 520
+  const count = opts.lite ? 70 : 150
   const perStyle = Math.ceil(count / styles.length)
   const dummy = new Object3D()
   const tint = new Color()
@@ -99,13 +97,13 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
     let i = 0
     while (i < perStyle) {
       const ang = r() * Math.PI * 2
-      const dist = 60 + Math.pow(r(), 0.6) * 340
+      const dist = 190 + Math.pow(r(), 0.8) * 260
       const x = CENTRE.x + Math.cos(ang) * dist, z = CENTRE.z + Math.sin(ang) * dist
       const w = 10 + r() * 18, d = 10 + r() * 18
       // From our floor (~84 m up) nearby blocks sit below eye level; only far towers rise into the sky,
       // so the window shows a skyline with the sunset above it.
-      const t = Math.min(1, (dist - 60) / 280)
-      const maxTop = -30 + t * 110 + (r() < 0.12 ? 40 : 0)
+      const t = Math.min(1, (dist - 190) / 260)
+      const maxTop = -10 + t * 90 + (r() < 0.1 ? 35 : 0)
       const h = Math.max(12, -GROUND_Y + maxTop * (0.45 + r() * 0.55))
       dummy.position.set(x, GROUND_Y + h / 2, z)
       dummy.scale.set(w, h, d)
@@ -140,40 +138,6 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
     const m = new PointsMaterial({ color: '#ff4a5a', size: 2.2, transparent: true, depthWrite: false, blending: AdditiveBlending })
     root.add(new Points(geo, m))
     movers.push((_dt, t) => (m.opacity = 0.25 + 0.75 * (Math.sin(t / 600) > 0.3 ? 1 : 0.2)))
-  }
-
-  // Traffic: streams of head/tail lights gliding along the avenues far below.
-  {
-    const lanes = 14, perLane = opts.lite ? 30 : 60
-    const n = lanes * perLane, geo = new BufferGeometry(), p = new Float32Array(n * 3), col = new Float32Array(n * 3)
-    const lane: { x: number; z: number; dx: number; dz: number; speed: number }[] = []
-    for (let l = 0; l < lanes; l++) {
-      const vertical = l % 2 === 0, off = -320 + (l >> 1) * 90 + (vertical ? 0 : 45)
-      lane.push(vertical ? { x: CENTRE.x + off, z: CENTRE.z, dx: 0, dz: 1, speed: 8 + r() * 6 } : { x: CENTRE.x, z: CENTRE.z + off, dx: 1, dz: 0, speed: 8 + r() * 6 })
-    }
-    const s = new Float32Array(n)
-    for (let i = 0; i < n; i++) {
-      s[i] = -400 + r() * 800
-      const red = r() < 0.5
-      col.set(red ? [1, 0.18, 0.15] : [1, 0.92, 0.7], i * 3)
-    }
-    geo.setAttribute('position', new BufferAttribute(p, 3))
-    geo.setAttribute('color', new BufferAttribute(col, 3))
-    root.add(new Points(geo, new PointsMaterial({ size: 1.6, vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, sizeAttenuation: true })))
-    movers.push((dt) => {
-      for (let i = 0; i < n; i++) {
-        const L = lane[Math.floor(i / perLane)]
-        const dir = col[i * 3 + 1] < 0.5 ? 1 : -1
-        s[i] += dir * L.speed * dt / 1000
-        if (s[i] > 400) s[i] = -400
-        if (s[i] < -400) s[i] = 400
-        const side = dir * 2.5
-        p[i * 3] = L.x + L.dx * s[i] + L.dz * side
-        p[i * 3 + 1] = GROUND_Y + 0.6
-        p[i * 3 + 2] = L.z + L.dz * s[i] + L.dx * side
-      }
-      geo.attributes.position.needsUpdate = true
-    })
   }
 
   // Soft clouds drifting across the sunset.

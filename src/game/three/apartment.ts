@@ -212,8 +212,8 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
   // Slab edge and facade under our floor, Sims-style cutaway of the tower.
   const slab = new Mesh(new BoxGeometry(UNIT.width + 0.3, 0.32, UNIT.depth + 0.3), mat('#e7ddd8', 0.85))
   slab.position.set(UNIT.width / 2, -0.165, UNIT.depth / 2)
-  const facade = new Mesh(new BoxGeometry(UNIT.width + 0.3, 60, UNIT.depth + 0.3), mat('#3f3a52', 0.35, 0.3))
-  facade.position.set(UNIT.width / 2, -30.33, UNIT.depth / 2)
+  const facade = new Mesh(new BoxGeometry(UNIT.width + 0.3, 84, UNIT.depth + 0.3), mat('#5a5468', 0.35, 0.3))
+  facade.position.set(UNIT.width / 2, -42.33, UNIT.depth / 2)
   root.add(slab, facade)
 
   // ── Walls, window wall, balcony railing ─────────────────
