@@ -6,6 +6,7 @@ import {
 } from 'three'
 import { UNIT } from '../world/layout'
 import type { Daylight } from '../world/daylight'
+import { lowRise } from './buildings'
 
 export const GROUND_Y = -84
 const CX = UNIT.width / 2, CZ = UNIT.depth / 2
@@ -145,9 +146,13 @@ export function buildStreets(opts: { lite?: boolean } = {}): Streets {
   })
   root.add(poles, heads)
 
-  // Low-rise shops along the roads with lit storefronts.
+  // Shophouses along the roads: the low-rise design with awnings and rooftop tanks, lit storefronts.
   const shopCount = opts.lite ? 50 : 110
-  const shops = new InstancedMesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial({ roughness: 0.7 }), shopCount)
+  const shopDesign = lowRise()
+  const shopFacade = new MeshStandardMaterial({ color: '#e8e2dc', roughness: 0.6, metalness: 0.15 })
+  const shopSolid = new MeshStandardMaterial({ roughness: 0.85 })
+  const shops = new InstancedMesh(shopDesign.facade, shopFacade, shopCount)
+  const shopBodies = new InstancedMesh(shopDesign.solid, shopSolid, shopCount)
   const frontMat = new MeshBasicMaterial({ toneMapped: false })
   const fronts = new InstancedMesh(new BoxGeometry(1, 1, 1), frontMat, shopCount)
   const col = new Color()
@@ -156,27 +161,32 @@ export function buildStreets(opts: { lite?: boolean } = {}): Streets {
     const rd = ROADS[Math.floor(r() * ROADS.length)]
     const s = rd.from + 20 + r() * (rd.to - rd.from - 40)
     const side = r() < 0.5 ? -1 : 1
-    const depth = 10 + r() * 8, w = 8 + r() * 10, h = 6 + r() * 14
-    const off = ROAD_W / 2 + 6 + depth / 2
+    const scale = 0.7 + r() * 0.5
+    const depth = 14 * scale, w = 24 * scale
+    const off = ROAD_W / 2 + 3 + depth / 2
     const x = rd.axis === 'x' ? s : rd.at + side * off, z = rd.axis === 'x' ? rd.at + side * off : s
     // Keep the park, the plaza and the space right under our window clear.
     if (Math.abs(x - CX) < 45 && z > CZ - 35 && z < CZ + 145) continue
-    dummy.position.set(x, y0 + h / 2, z)
-    dummy.scale.set(rd.axis === 'x' ? w : depth, h, rd.axis === 'x' ? depth : w)
-    dummy.rotation.set(0, 0, 0)
+    // Face the road: the awning is on the design's +z side.
+    const yaw = rd.axis === 'x' ? (side > 0 ? Math.PI : 0) : side > 0 ? Math.PI / 2 : -Math.PI / 2
+    dummy.position.set(x, y0, z)
+    dummy.rotation.set(0, yaw, 0)
+    dummy.scale.setScalar(scale)
     dummy.updateMatrix()
     shops.setMatrixAt(placed, dummy.matrix)
-    shops.setColorAt(placed, col.setHSL(0.05 + r() * 0.9, 0.18 + r() * 0.2, 0.55 + r() * 0.25))
+    shopBodies.setMatrixAt(placed, dummy.matrix)
+    shopBodies.setColorAt(placed, col.setHSL(0.05 + r() * 0.9, 0.2 + r() * 0.25, 0.55 + r() * 0.25))
     // Glowing ground-floor window strip facing the road.
-    const fx = rd.axis === 'x' ? x : rd.at + side * (ROAD_W / 2 + 5.9), fz = rd.axis === 'x' ? rd.at + side * (ROAD_W / 2 + 5.9) : z
+    const fx = rd.axis === 'x' ? x : rd.at + side * (ROAD_W / 2 + 2.9), fz = rd.axis === 'x' ? rd.at + side * (ROAD_W / 2 + 2.9) : z
     dummy.position.set(fx, y0 + 1.6, fz)
     dummy.scale.set(rd.axis === 'x' ? w * 0.85 : 0.2, 2.2, rd.axis === 'x' ? 0.2 : w * 0.85)
+    dummy.rotation.set(0, 0, 0)
     dummy.updateMatrix()
     fronts.setMatrixAt(placed, dummy.matrix)
     fronts.setColorAt(placed, col.setHSL(0.08 + r() * 0.08, 0.7, 0.62 + r() * 0.2).multiplyScalar(1.4))
     placed++
   }
-  root.add(shops, fronts)
+  root.add(shops, shopBodies, fronts)
 
   // Cars driving both ways on every road, with head- and tail-lights.
   const perRoad = opts.lite ? 6 : 12

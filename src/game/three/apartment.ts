@@ -216,9 +216,20 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
   // Slab edge and facade under our floor, Sims-style cutaway of the tower.
   const slab = new Mesh(new BoxGeometry(UNIT.width + 0.3, 0.32, UNIT.depth + 0.3), mat('#e7ddd8', 0.85))
   slab.position.set(UNIT.width / 2, -0.165, UNIT.depth / 2)
-  const facade = new Mesh(new BoxGeometry(UNIT.width + 0.3, 84, UNIT.depth + 0.3), mat('#5a5468', 0.35, 0.3))
+  const facade = new Mesh(new BoxGeometry(UNIT.width + 0.3, 84, UNIT.depth + 0.3), mat('#bfc6d4', 0.3, 0.35))
   facade.position.set(UNIT.width / 2, -42.33, UNIT.depth / 2)
   root.add(slab, facade)
+  // Our tower: balcony slabs and glass bands on every floor below us.
+  const bandMat = mat('#e9e2dc', 0.8)
+  const glassBand = new MeshStandardMaterial({ color: '#1e2a40', roughness: 0.15, metalness: 0.7, envMapIntensity: 1.2 })
+  for (let f = 1; f <= 25; f++) {
+    const y = -f * 3.3
+    const band = new Mesh(new BoxGeometry(UNIT.width + 1.6, 0.25, UNIT.depth + 1.6), bandMat)
+    band.position.set(UNIT.width / 2, y, UNIT.depth / 2)
+    const glass = new Mesh(new BoxGeometry(UNIT.width + 0.5, 1.9, UNIT.depth + 0.5), glassBand)
+    glass.position.set(UNIT.width / 2, y + 1.3, UNIT.depth / 2)
+    root.add(band, glass)
+  }
 
   // ── Walls, window wall, balcony railing ─────────────────
   const wallMat = pbr('wall_plaster', { x: 2, z: 1 }, '#fff7f1')
