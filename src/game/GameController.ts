@@ -7,6 +7,10 @@ import { buildApartment, type Apartment } from './three/apartment'
 import { buildCity, type City } from './three/city'
 import { Avatar, PLACEHOLDER_AVATAR } from './three/avatar'
 import { addBirthdayDecor } from './three/decor'
+import { choreProps, type ChoreProps } from './three/props'
+import { ACTIVITIES, type ActivityId } from './play/minigame'
+import { MISSIONS } from './play/economy'
+import { FURNITURE } from './world/layout'
 import { daylight, klClock } from './world/daylight'
 import { classifyGesture, type PointerSample } from './input/gesture'
 import { cleanChat, type GameId, type GameOp, type PresenceState } from './net/protocol'
@@ -60,6 +64,13 @@ export class GameController {
   private savedCam: { radius: number; phi: number } | null = null
   private lastHop = 0
   private lastDaylight = 0
+  /** Hands-on activity in progress (cooking, bath, TV…). */
+  private fp: { activity: ActivityId; furniture: FurnitureId; mission?: string; yaw: number; pitch: number; progress: number } | null = null
+  private props: ChoreProps | null = null
+  /** True = watch my character in 3D instead of first person. */
+  private watching = false
+  private fpDrag: { x: number; y: number } | null = null
+  private savedOffset: Vector3 | null = null
 
   constructor(canvas: HTMLCanvasElement, room: Room, me: PresenceState, partnerHint: Identity | null, opts: GameOptions = {}) {
     this.canvas = canvas
@@ -223,6 +234,103 @@ export class GameController {
     this.dispatch({ type: 'set-avatar', avatar: path })
   }
 
+  private beginActivity(activity: ActivityId, furniture: FurnitureId, mission?: string) {
+    this.endActivity()
+    this.fp = { activity, furniture, mission, yaw: 0, pitch: 0, progress: 0 }
+    const stage = this.stage
+    if (stage) {
+      this.props?.dispose()
+      this.props = choreProps(activity)
+      if (this.props) stage.scene.add(this.props.root)
+    }
+    this.setView(this.watching ? 'third' : 'first')
+  }
+
+  private endActivity() {
+    if (!this.fp) return
+    this.fp = null
+    this.props?.dispose()
+    this.props = null
+    const stage = this.stage
+    if (stage) {
+      stage.controls.enabled = true
+      stage.screenOffset.y = 0
+      const me = this.avatars.get(this.sim.me.userId)
+      if (me) me.avatar.root.visible = true
+      // Back to exactly the view we had before.
+      const p = this.sim.me.pos
+      stage.controls.target.set(p.x, 0.9, p.z)
+      stage.camera.position.copy(stage.controls.target).add(this.savedOffset ?? new Vector3(0, 5, -5))
+      stage.controls.update()
+      this.camGoal = null
+      this.savedOffset = null
+    }
+  }
+
+  /** First person = play it hands-on; third = watch my character do it. */
+  setView(view: 'first' | 'third') {
+    this.watching = view === 'third'
+    const stage = this.stage
+    if (!stage || !this.fp) return
+    const me = this.avatars.get(this.sim.me.userId)
+    if (!this.savedOffset) this.savedOffset = stage.camera.position.clone().sub(stage.controls.target)
+    this.dispatch({ type: 'chore-mode', hands: view === 'first' })
+    if (view === 'first') {
+      stage.controls.enabled = false
+      this.camGoal = null
+      if (me) me.avatar.root.visible = false
+    } else {
+      // Third person: step back to a close view of my character at work.
+      const p = this.sim.me.pos
+      stage.controls.target.set(p.x, 0.9, p.z)
+      const back = this.savedOffset.clone().setY(0).normalize().multiplyScalar(2.6)
+      stage.camera.position.set(p.x + back.x, 2.2, p.z + back.z)
+      stage.controls.enabled = true
+      stage.controls.update()
+      if (me) me.avatar.root.visible = true
+    }
+  }
+
+  get activity() {
+    return this.fp ? { activity: this.fp.activity, furniture: this.fp.furniture, mission: this.fp.mission, watching: this.watching } : null
+  }
+
+  /** The mini-game reports how far along it is, so the 3D props (food, plates…) keep up. */
+  setActivityProgress(p: number) {
+    if (this.fp) this.fp.progress = p
+  }
+
+  completeChore(stars: 1 | 2 | 3) {
+    this.dispatch({ type: 'complete-chore', stars })
+  }
+
+  exitActivity() {
+    this.dispatch({ type: 'exit-activity' })
+  }
+
+  /** Eye position and look target for the current activity, in world space. */
+  private firstPersonPose(): { eye: Vector3; look: Vector3 } | null {
+    const fp = this.fp
+    if (!fp) return null
+    const def = ACTIVITIES[fp.activity]
+    const furn = FURNITURE.find((x) => x.id === fp.furniture)!
+    const me = this.sim.me
+    const toward = new Vector3(furn.pos.x - me.pos.x, 0, furn.pos.z - me.pos.z)
+    const seated = me.activity === 'sitting' || me.activity === 'sleeping'
+    const dir = seated ? new Vector3(Math.sin(furn.rotY), 0, Math.cos(furn.rotY)) : toward.lengthSq() > 1e-4 ? toward.normalize() : new Vector3(0, 0, 1)
+    const eye = new Vector3(me.pos.x, 0, me.pos.z).add(dir.clone().multiplyScalar(def.eye[2])).add(new Vector3(0, def.eye[1], 0))
+    let look: Vector3
+    if (fp.activity === 'tv') {
+      const tv = FURNITURE.find((x) => x.id === 'tv')!
+      look = new Vector3(tv.pos.x, 1.0, tv.pos.z)
+    } else if (seated) look = eye.clone().add(dir.multiplyScalar(4)).add(new Vector3(0, def.look[1] - def.eye[1], 0))
+    else look = new Vector3(furn.pos.x, def.look[1], furn.pos.z)
+    // Look around a little with a drag.
+    const off = look.clone().sub(eye)
+    const yawed = new Vector3(off.x * Math.cos(fp.yaw) - off.z * Math.sin(fp.yaw), off.y + fp.pitch * off.length() * 0.6, off.x * Math.sin(fp.yaw) + off.z * Math.cos(fp.yaw))
+    return { eye, look: eye.clone().add(yawed) }
+  }
+
   /** Wardrobe close-up: zoom onto my character, who turns to face the camera. */
   focusOnMe(on: boolean) {
     const stage = this.stage
@@ -258,6 +366,7 @@ export class GameController {
     for (const u of this.unsubs) u()
     void this.room.leave()
     for (const { avatar } of this.avatars.values()) avatar.dispose()
+    this.props?.dispose()
     this.stage?.renderer.setAnimationLoop(null)
     this.stage?.dispose()
   }
@@ -271,7 +380,12 @@ export class GameController {
     const { outbox, hud } = this.sim
     if (outbox.length || hud.length) this.sim = { ...this.sim, outbox: [], hud: [] }
     for (const m of outbox) this.room.send(m)
-    for (const h of hud) for (const cb of this.hudListeners) cb(h)
+    for (const h of hud) {
+      if (h.type === 'activity') this.beginActivity(h.activity, h.furniture, h.mission)
+      for (const cb of this.hudListeners) cb(h)
+    }
+    // Standing up (exit, finish, walking away) ends the hands-on view.
+    if (this.fp && !this.sim.me.chore && this.sim.me.activity !== 'sitting' && this.sim.me.activity !== 'sleeping') this.endActivity()
     const presence = this.presenceNow()
     const key = JSON.stringify(presence)
     if (key !== this.lastPresenceKey) {
@@ -317,6 +431,23 @@ export class GameController {
       }
     }
 
+    if (this.fp && !this.watching) {
+      const pose = this.firstPersonPose()
+      if (pose) {
+        // Gentle breathing sway so it feels alive.
+        pose.eye.y += Math.sin(now / 900) * 0.008
+        camera.position.lerp(pose.eye, Math.min(1, dt / 160))
+        controls.target.copy(pose.look)
+        camera.lookAt(pose.look)
+      }
+    }
+    if (this.fp && this.props) {
+      const chore = this.sim.me.chore
+      const m = chore && MISSIONS.find((x) => x.id === chore.id)
+      const timed = m && chore ? 1 - Math.max(0, chore.until - now) / m.durationMs : 0
+      this.props.setProgress(Math.max(timed, this.fp.progress))
+      this.props.update(dt, now)
+    }
     this.apt?.updateCutaway({ x: camera.position.x, z: camera.position.z }, me.pos)
     // Real Malaysia time (dev: ?hour=21.5 to preview). Recomputed every half second.
     if (now - this.lastDaylight > 500) {
@@ -390,6 +521,24 @@ export class GameController {
   }
 
   private onPointer(kind: 'down' | 'up', ev: PointerEvent) {
+    if (this.fp && !this.watching) {
+      if (kind === 'down') {
+        this.fpDrag = { x: ev.clientX, y: ev.clientY }
+        const move = (e: PointerEvent) => {
+          if (!this.fpDrag || !this.fp) return
+          this.fp.yaw = Math.max(-0.7, Math.min(0.7, this.fp.yaw - (e.clientX - this.fpDrag.x) * 0.004))
+          this.fp.pitch = Math.max(-0.4, Math.min(0.4, this.fp.pitch - (e.clientY - this.fpDrag.y) * 0.003))
+          this.fpDrag = { x: e.clientX, y: e.clientY }
+        }
+        const up = () => {
+          this.fpDrag = null
+          window.removeEventListener('pointermove', move)
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up, { once: true })
+      }
+      return
+    }
     if (kind === 'down') {
       this.activePointers.add(ev.pointerId)
       if (this.activePointers.size === 1) {

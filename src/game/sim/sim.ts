@@ -7,7 +7,8 @@ import type { NetMsg, PresenceState } from '../net/protocol'
 import { BED_SLEEP_SPOTS, FURNITURE, type FurnitureAction, type FurnitureId } from '../world/layout'
 import { NavGrid } from '../world/navgrid'
 import type { ActionKind, Activity, EmoteKind, InteractionKind, Role, SoloClip, UserId, Vec2 } from '../types'
-import { MISSIONS, affectionReward, missionReady } from '../play/economy'
+import { MISSIONS, affectionReward, missionReady, type Mission } from '../play/economy'
+import { activityFor, type ActivityId } from '../play/minigame'
 import { INTERACTION_DURATION, facingTo, needsRequest, planInteraction, resolveCrossing, type InteractMsg, type Plan } from './interactions'
 
 export const WALK_SPEED = 1.6 // m/s
@@ -35,6 +36,8 @@ export type Avatar = Identity & {
   then?: { use: FurnitureId; action: FurnitureAction } | { mission: string }
   /** A chore in progress: pays when `until` passes, cancelled by walking away. */
   chore?: { id: string; until: number }
+  /** Set when I just started something hands-on; the tick turns it into a HUD `activity` event. */
+  announce?: { activity: ActivityId; furniture: FurnitureId; mission?: string }
 }
 
 export type ActiveInteraction = {
@@ -57,6 +60,7 @@ export type HudEvent =
   | { type: 'toast'; text: string }
   | { type: 'request-cancel' }
   | { type: 'earn'; amount: number; reason: string }
+  | { type: 'activity'; activity: ActivityId; furniture: FurnitureId; mission?: string }
   | { type: 'game'; msg: Extract<NetMsg, { t: 'game' }> }
 
 export type SimState = {
@@ -85,6 +89,9 @@ export type SimEvent =
   | { type: 'set-avatar'; avatar: string }
   | { type: 'action'; kind: ActionKind; id: string }
   | { type: 'mission'; id: string }
+  | { type: 'complete-chore'; stars: 1 | 2 | 3 }
+  | { type: 'exit-activity' }
+  | { type: 'chore-mode'; hands: boolean }
   | { type: 'accept'; id: string }
   | { type: 'use-furniture'; id: FurnitureId; action: FurnitureAction }
   | { type: 'say'; text: string; id: string }
@@ -124,6 +131,8 @@ export function interactionClip(kind: InteractionKind, initiator: boolean): Clip
 
 function walkTo(a0: Avatar, target: Vec2, now: number): Avatar {
   const a: Avatar = { ...a0, chore: undefined }
+  // Already there: no micro-walk, just arrive.
+  if (dist(a.pos, target) < 0.12) return { ...a, pos: { ...target }, path: [], activity: 'idle', clip: 'idle', clipStart: now, furniture: undefined }
   const path = grid.findPath(a.pos, target)
   if (!path || path.length < 2) return { ...a, path: [], activity: 'idle', clip: 'idle', clipStart: now, furniture: undefined }
   return { ...a, path: path.slice(1), activity: 'walking', clip: 'walk', clipStart: now, furniture: undefined }
@@ -148,18 +157,36 @@ function advance(a: Avatar, dt: number, now: number): Avatar {
   if (path.length) return moved
   if (a.then && 'mission' in a.then) {
     const m = MISSIONS.find((x) => x.id === (a.then as { mission: string }).mission)
-    if (m) return { ...moved, then: undefined, activity: 'idle', clip: 'chore', clipStart: now, chore: { id: m.id, until: now + m.durationMs } }
+    if (m) return startChore(moved, m, now)
   }
   if (a.then && 'use' in a.then) return useFurniture(moved, a.then.use, a.then.action, now)
   return { ...moved, activity: a.activity === 'walking' ? 'idle' : a.activity, clip: a.activity === 'walking' ? 'idle' : a.clip, clipStart: now }
 }
 
+function startChore(a: Avatar, m: Mission, now: number): Avatar {
+  const act = activityFor({ mission: m.id })
+  const f = FURNITURE.find((x) => x.id === m.furniture)!
+  return {
+    ...a, then: undefined, activity: 'idle', clip: 'chore', clipStart: now, chore: { id: m.id, until: now + m.durationMs },
+    facing: facingTo(a.pos, f.pos),
+    announce: act ? { activity: act, furniture: m.furniture, mission: m.id } : undefined,
+  }
+}
+
 function useFurniture(a: Avatar, id: FurnitureId, action: FurnitureAction, now: number): Avatar {
   const f = FURNITURE.find((x) => x.id === id)
   if (!f) return a
-  if (action === 'sleep') return { ...asleep(a, a.online), clipStart: now }
-  if (action === 'sit') return { ...a, then: undefined, path: [], pos: { ...f.pos }, facing: f.rotY, activity: 'sitting', clip: 'sit', clipStart: now, furniture: id }
+  const act = activityFor({ furniture: id, action })
+  const announce = act ? { activity: act, furniture: id } : undefined
+  if (action === 'sleep') return { ...asleep(a, a.online), clipStart: now, announce }
+  if (action === 'sit' || action === 'bathe') return { ...a, then: undefined, path: [], pos: { ...f.pos }, facing: f.rotY, activity: 'sitting', clip: 'sit', clipStart: now, furniture: id, announce }
   return { ...a, then: undefined, path: [], activity: 'idle', clip: 'idle', clipStart: now }
+}
+
+/** Stand up / stop whatever I'm doing, on a walkable spot next to it. */
+function standUp(a: Avatar, now: number): Avatar {
+  const pos = a.furniture ? (FURNITURE.find((f) => f.id === a.furniture)?.usePoint ?? grid.nearestWalkable(a.pos)) : a.pos
+  return { ...a, pos: { ...pos }, chore: undefined, then: undefined, furniture: undefined, path: [], activity: 'idle', clip: 'idle', clipStart: now }
 }
 
 function startInteraction(s: SimState, msg: InteractMsg, now: number): SimState {
@@ -314,8 +341,12 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       }
       me = settle(me)
       partner = partner ? settle(partner) : null
-      // Finished chore → pay it and start its cooldown.
       let hud = s.hud, missionsDone = s.missionsDone
+      if (me.announce) {
+        hud = [...hud, { type: 'activity', ...me.announce }]
+        me = { ...me, announce: undefined }
+      }
+      // Finished chore → pay it and start its cooldown.
       if (me.chore && now >= me.chore.until) {
         const m = MISSIONS.find((x) => x.id === me.chore!.id)!
         hud = [...hud, { type: 'earn', amount: m.reward, reason: m.label }]
@@ -339,7 +370,8 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       let me = walkTo(s.me, target, now)
       me = me.activity === 'walking' ? { ...me, then: { use: e.id, action: e.action } } : useFurniture(me, e.id, e.action, now)
       const outbox = me.activity === 'walking' ? [...s.outbox, { t: 'move' as const, from: me.userId, path: [{ ...s.me.pos }, ...me.path], at: now }] : s.outbox
-      return { ...s, me, outbox }
+      const hud = me.announce ? [...s.hud, { type: 'activity' as const, ...me.announce }] : s.hud
+      return { ...s, me: { ...me, announce: undefined }, outbox, hud }
     }
     case 'interact': {
       const p = s.partner
@@ -359,11 +391,35 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       }
       const f = FURNITURE.find((x) => x.id === m.furniture)!
       let me = walkTo(s.me, f.usePoint ?? grid.nearestWalkable(f.pos), now)
-      if (me.activity !== 'walking') me = { ...me, clip: 'chore', clipStart: now, chore: { id: m.id, until: now + m.durationMs } }
+      if (me.activity !== 'walking') me = startChore(me, m, now)
       else me = { ...me, then: { mission: m.id } }
       const outbox = me.activity === 'walking' ? [...s.outbox, { t: 'move' as const, from: me.userId, path: [{ ...s.me.pos }, ...me.path], at: now }] : s.outbox
-      return { ...s, me, outbox }
+      const hud = me.announce ? [...s.hud, { type: 'activity' as const, ...me.announce }] : s.hud
+      return { ...s, me: { ...me, announce: undefined }, outbox, hud }
     }
+    case 'complete-chore': {
+      const c = s.me.chore
+      if (!c) return s
+      const m = MISSIONS.find((x) => x.id === c.id)!
+      const bonus = e.stars === 3 ? 1.5 : e.stars === 2 ? 1.2 : 1
+      const stars = '⭐'.repeat(e.stars)
+      return {
+        ...s,
+        me: { ...standUp(s.me, now), clip: 'happy', clipStart: now },
+        missionsDone: { ...s.missionsDone, [m.id]: now },
+        hud: [...s.hud, { type: 'earn', amount: Math.round(m.reward * bonus), reason: `${m.label} ${stars}` }],
+      }
+    }
+    case 'chore-mode': {
+      // Hands-on: the chore waits for the mini-game. Watching in 3D: it finishes on its timer.
+      const c = s.me.chore
+      if (!c) return s
+      const m = MISSIONS.find((x) => x.id === c.id)!
+      return { ...s, me: { ...s.me, chore: { ...c, until: e.hands ? Infinity : now + m.durationMs } } }
+    }
+    case 'exit-activity':
+      if (s.interaction) return s
+      return { ...s, me: standUp(s.me, now) }
     case 'action': {
       if (s.interaction || s.me.activity === 'walking') return s
       const p = s.partner
