@@ -1,7 +1,7 @@
 // Glue between the pure sim, the Room (network) and three.js (rendering + input).
 import { Raycaster, Spherical, Vector2, Vector3, type Object3D } from 'three'
 import type { CharacterLook } from './character/look'
-import { sampleClip } from './character/poses'
+import { blendPose, sampleClip, type Pose } from './character/poses'
 import { createStage, type Stage } from './three/stage'
 import { buildApartment, type Apartment } from './three/apartment'
 import { buildCity, type City } from './three/city'
@@ -13,6 +13,8 @@ import type { Room } from './net/room'
 import { createSim, step, type Avatar as SimAvatar, type HudEvent, type Identity, type SimEvent, type SimState } from './sim/sim'
 import type { FurnitureAction, FurnitureId } from './world/layout'
 import type { EmoteKind, InteractionKind, UserId } from './types'
+
+const BLEND_MS = 260
 
 const newId = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)
 
@@ -35,7 +37,15 @@ export class GameController {
   private city: City | null = null
   private birthday: ReturnType<typeof addBirthdayDecor> | null = null
   private sim: SimState
-  private avatars = new Map<UserId, { avatar: Avatar; expr: string; path?: string }>()
+  private avatars = new Map<UserId, {
+    avatar: Avatar
+    expr: string
+    path?: string
+    shown?: { x: number; z: number; y: number; facing: number }
+    clip?: string
+    lastPose?: Pose
+    blend?: { from: Pose; start: number }
+  }>()
   private hudListeners = new Set<(e: HudEvent) => void>()
   private unsubs: (() => void)[] = []
   private lastPresenceKey = ''
@@ -284,6 +294,7 @@ export class GameController {
     this.apt?.update(dt, now)
     this.city?.update(dt, now)
     this.birthday?.update(now)
+    stage.adapt(dt)
     stage.render()
   }
 
@@ -307,11 +318,33 @@ export class GameController {
     }
     // Seat height on the sofa/chairs, mattress height when asleep.
     const y = a.activity === 'sleeping' ? 0.48 : a.activity === 'sitting' ? -0.12 : 0
-    entry.avatar.setPosition(a.pos, a.facing, y)
+    // Glide toward the simulated spot instead of jumping (network corrections, seating, waking up).
+    const s = entry.shown ?? (entry.shown = { x: a.pos.x, z: a.pos.z, y, facing: a.facing })
+    const k = Math.min(1, dt / 90)
+    const far = Math.hypot(a.pos.x - s.x, a.pos.z - s.z) > 2.5
+    s.x = far ? a.pos.x : s.x + (a.pos.x - s.x) * k
+    s.z = far ? a.pos.z : s.z + (a.pos.z - s.z) * k
+    s.y += (y - s.y) * Math.min(1, dt / 160)
+    const turn = Math.atan2(Math.sin(a.facing - s.facing), Math.cos(a.facing - s.facing))
+    s.facing += turn * Math.min(1, dt / 110)
+    entry.avatar.setPosition(s, s.facing, s.y)
+
     // Dev-only: /home?local=1&pose=hug&t=1500 freezes everyone in a clip for checking animations.
     const preview = import.meta.env.DEV ? new URLSearchParams(location.search) : null
     const forced = preview?.get('pose') as Parameters<typeof sampleClip>[0] | null
-    entry.avatar.setPose(forced ? sampleClip(forced, Number(preview!.get('t') ?? 750)) : sampleClip(a.clip, now - a.clipStart))
+    let pose = forced ? sampleClip(forced, Number(preview!.get('t') ?? 750)) : sampleClip(a.clip, now - a.clipStart)
+    // Cross-fade for a quarter second whenever the clip changes, so motions flow into each other.
+    if (entry.clip !== a.clip) {
+      if (entry.lastPose) entry.blend = { from: entry.lastPose, start: now }
+      entry.clip = a.clip
+    }
+    if (entry.blend) {
+      const t = (now - entry.blend.start) / BLEND_MS
+      if (t >= 1) entry.blend = undefined
+      else pose = blendPose(entry.blend.from, pose, t * t * (3 - 2 * t))
+    }
+    entry.lastPose = pose
+    entry.avatar.setPose(pose)
     const expr = a.activity === 'sleeping' ? 'sleepy' : a.clip === 'kiss' ? 'kiss' : a.expression
     if (expr !== entry.expr) {
       entry.avatar.setExpression(expr as never)

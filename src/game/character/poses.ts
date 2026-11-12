@@ -57,7 +57,7 @@ function resolve(k: Partial2): Pose {
   return p
 }
 
-function lerpPose(a: Pose, b: Pose, t: number): Pose {
+export function blendPose(a: Pose, b: Pose, t: number): Pose {
   const l = (x: number, y: number) => x + (y - x) * t
   const le = (x: Euler, y: Euler) => ({ x: l(x.x, y.x), y: l(x.y, y.y), z: l(x.z, y.z) })
   return { rootY: l(a.rootY, b.rootY), lean: l(a.lean, b.lean), head: le(a.head, b.head), body: le(a.body, b.body), armL: le(a.armL, b.armL), armR: le(a.armR, b.armR), legL: le(a.legL, b.legL), legR: le(a.legR, b.legR) }
@@ -69,7 +69,7 @@ function sampleKeys(keys: Key[], t: number): Pose {
     const [t1, k1] = keys[i]
     if (t <= t1) {
       const [t0, k0] = keys[i - 1]
-      return lerpPose(resolve(k0), resolve(k1), smooth((t - t0) / (t1 - t0)))
+      return blendPose(resolve(k0), resolve(k1), smooth((t - t0) / (t1 - t0)))
     }
   }
   return resolve(keys[keys.length - 1][1])

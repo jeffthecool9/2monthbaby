@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { CLIP_DURATION, CLIP_LOOPS, REST_POSE, sampleClip, type ClipName, type Pose } from '../../src/game/character/poses'
+import { CLIP_DURATION, CLIP_LOOPS, REST_POSE, blendPose, sampleClip, type ClipName, type Pose } from '../../src/game/character/poses'
 import { INTERACTION_DURATION } from '../../src/game/sim/interactions'
 
 const JOINTS = ['head', 'body', 'armL', 'armR', 'legL', 'legR'] as const
@@ -16,6 +16,16 @@ function expectPoseClose(a: Pose, b: Pose, tol: number) {
   const va = values(a), vb = values(b)
   va.forEach((v, i) => expect(Math.abs(v - vb[i])).toBeLessThanOrEqual(tol))
 }
+
+describe('blendPose', () => {
+  test('halfway between two poses is the midpoint of every joint', () => {
+    const a = sampleClip('idle', 0), b = sampleClip('wave', 750)
+    const m = blendPose(a, b, 0.5)
+    expect(m.armR.z).toBeCloseTo((a.armR.z + b.armR.z) / 2, 6)
+    expect(blendPose(a, b, 0)).toEqual(a)
+    expect(blendPose(a, b, 1)).toEqual(b)
+  })
+})
 
 describe('poses', () => {
   test('idle stays near rest', () => {

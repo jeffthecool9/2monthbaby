@@ -1,6 +1,6 @@
 // A VRoid / VRM character: loads the model, drives its humanoid bones from our Pose,
 // blinks, shows expressions, and lets hair and clothes swing (spring bones).
-import { Group, Quaternion, type Object3D } from 'three'
+import { Group, Quaternion, type Mesh, type Object3D } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { VRMLoaderPlugin, VRMUtils, type VRM, VRMExpressionPresetName } from '@pixiv/three-vrm'
 import type { Pose } from '../character/poses'
@@ -21,6 +21,8 @@ const EXPRESSIONS: Record<Exclude<Expression, 'neutral' | 'blink'>, [string, num
   sleepy: [[VRMExpressionPresetName.Blink, 1]],
   kiss: [[VRMExpressionPresetName.Ou, 0.8], [VRMExpressionPresetName.Blink, 0.9]],
 }
+
+const PROP_PATTERN = /robo|backpack|armgear|anim_logo|green_emit/i
 
 const loader = new GLTFLoader()
 loader.register((parser) => new VRMLoaderPlugin(parser))
@@ -66,6 +68,9 @@ export class Avatar {
         if ((o as { isMesh?: boolean }).isMesh) {
           o.castShadow = true
           o.receiveShadow = true
+          // The Seed-san sample wears a robot arm and backpack; hide sci-fi props on placeholders.
+          const matName = ((o as Mesh).material as { name?: string } | undefined)?.name ?? ''
+          if (PROP_PATTERN.test(o.name) || PROP_PATTERN.test(matName)) o.visible = false
         }
       })
       if (this.vrm) {

@@ -21,6 +21,8 @@ export type Stage = {
   sun: DirectionalLight
   /** Shift the framed point up/down on screen (fraction of view height), e.g. for the wardrobe sheet. */
   screenOffset: Vector2
+  /** Feed the frame time (ms) so quality can drop automatically on slow phones. */
+  adapt(dt: number): void
   render(): void
   resize(): void
   dispose(): void
@@ -78,6 +80,7 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
 
   let composer: EffectComposer | null = null
   let gtao: GTAOPass | null = null
+  let bloom: UnrealBloomPass | null = null
   if (!lite) {
     composer = new EffectComposer(renderer)
     composer.addPass(new RenderPass(scene, camera))
@@ -85,9 +88,37 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
     gtao.updateGtaoMaterial({ radius: 0.35, distanceExponent: 1.4, thickness: 1.2, scale: 1.1 })
     gtao.blendIntensity = 0.85
     composer.addPass(gtao)
-    composer.addPass(new UnrealBloomPass(new Vector2(1, 1), 0.22, 0.5, 0.92))
+    bloom = new UnrealBloomPass(new Vector2(1, 1), 0.22, 0.5, 0.92)
+    composer.addPass(bloom)
     composer.addPass(new SMAAPass())
     composer.addPass(new OutputPass())
+  }
+
+  // Adaptive quality: if frames run slow for a couple of seconds, step down one notch
+  // (resolution → ambient occlusion → bloom/shadow resolution) so motion stays smooth.
+  let avgMs = 16, slowFor = 0, level = 0, warm = 0
+  const steps: (() => void)[] = [
+    () => renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5)),
+    () => gtao && (gtao.enabled = false),
+    () => {
+      renderer.setPixelRatio(1)
+      bloom && (bloom.enabled = false)
+      sun.shadow.mapSize.set(1024, 1024)
+      sun.shadow.map?.dispose()
+      sun.shadow.map = null as never
+    },
+  ]
+  const adapt = (dt: number) => {
+    warm += dt
+    avgMs += (dt - avgMs) * 0.05
+    if (warm < 3000 || level >= steps.length) return
+    slowFor = avgMs > 24 ? slowFor + dt : 0
+    if (slowFor > 2000) {
+      steps[level++]()
+      slowFor = 0
+      avgMs = 16
+      resize()
+    }
   }
 
   const screenOffset = new Vector2(0, 0)
@@ -113,7 +144,7 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
   }
 
   return {
-    renderer, scene, camera, controls, sun, screenOffset, render, resize,
+    renderer, scene, camera, controls, sun, screenOffset, adapt, render, resize,
     dispose() {
       controls.dispose()
       composer?.dispose()
