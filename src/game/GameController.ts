@@ -19,8 +19,8 @@ const newId = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.
 export type GameOptions = {
   lite?: boolean
   birthdayName?: string | null
-  /** VRoid (.vrm) URL per user; falls back to the bundled placeholders. */
-  avatarUrls?: Partial<Record<UserId, string>>
+  /** Turns a stored avatar path into a loadable (signed) URL; without it, placeholders are used. */
+  resolveAvatar?: (path: string) => Promise<string>
 }
 
 type CamGoal = { radius: number; phi: number; y: number; offsetY: number; release?: boolean }
@@ -35,7 +35,7 @@ export class GameController {
   private city: City | null = null
   private birthday: ReturnType<typeof addBirthdayDecor> | null = null
   private sim: SimState
-  private avatars = new Map<UserId, { avatar: Avatar; expr: string }>()
+  private avatars = new Map<UserId, { avatar: Avatar; expr: string; path?: string }>()
   private hudListeners = new Set<(e: HudEvent) => void>()
   private unsubs: (() => void)[] = []
   private lastPresenceKey = ''
@@ -54,7 +54,7 @@ export class GameController {
     this.room = room
     this.meStart = me
     this.opts = opts
-    this.sim = createSim({ userId: me.userId, name: me.name, role: me.role, look: me.look }, me.pos, partnerHint)
+    this.sim = createSim({ userId: me.userId, name: me.name, role: me.role, look: me.look, avatar: me.avatar }, me.pos, partnerHint)
   }
 
   async start(): Promise<void> {
@@ -137,7 +137,7 @@ export class GameController {
 
   private presenceNow(): Partial<PresenceState> {
     const me = this.sim.me
-    return { pos: me.pos, facing: me.facing, activity: me.activity, look: me.look, furniture: me.furniture }
+    return { pos: me.pos, facing: me.facing, activity: me.activity, look: me.look, furniture: me.furniture, avatar: me.avatar }
   }
 
   onHud(cb: (e: HudEvent) => void): () => void {
@@ -181,10 +181,9 @@ export class GameController {
     }
   }
 
-  /** Swap a character's VRoid model (e.g. after uploading a new .vrm). */
-  setAvatarUrl(userId: UserId, url: string) {
-    this.opts.avatarUrls = { ...this.opts.avatarUrls, [userId]: url }
-    void this.avatars.get(userId)?.avatar.load(url)
+  /** After uploading a new .vrm: show it on me and tell my partner through presence. */
+  setMyAvatar(path: string) {
+    this.dispatch({ type: 'set-avatar', avatar: path })
   }
 
   /** Wardrobe close-up: zoom onto my character, who turns to face the camera. */
@@ -292,12 +291,19 @@ export class GameController {
     const stage = this.stage!
     let entry = this.avatars.get(a.userId)
     if (!entry) {
-      const url = this.opts.avatarUrls?.[a.userId] ?? PLACEHOLDER_AVATAR[a.role]
-      const avatar = new Avatar(url)
+      const avatar = new Avatar(PLACEHOLDER_AVATAR[a.role])
       avatar.setUserId(a.userId)
       stage.scene.add(avatar.root)
       entry = { avatar, expr: '' }
       this.avatars.set(a.userId, entry)
+    }
+    // Custom VRoid character: resolve its private URL and swap the model in.
+    if (a.avatar && a.avatar !== entry.path && this.opts.resolveAvatar) {
+      entry.path = a.avatar
+      const target = entry
+      void this.opts.resolveAvatar(a.avatar).then((url) => {
+        if (target.path === a.avatar) void target.avatar.load(url)
+      }).catch(console.warn)
     }
     // Seat height on the sofa/chairs, mattress height when asleep.
     const y = a.activity === 'sleeping' ? 0.48 : a.activity === 'sitting' ? -0.12 : 0

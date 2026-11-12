@@ -65,9 +65,11 @@ function SettingsButton() {
   )
 }
 
-export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
+export function Hud({ controller, onLookChange, onSay, onUploadAvatar, history = [], extra }: {
   controller: GameController | null
   onLookChange?: (look: CharacterLook) => void
+  /** Upload a VRoid .vrm as my character (only when connected to Supabase). */
+  onUploadAvatar?: (file: File) => Promise<void>
   /** Called with each chat message I send (after cleaning), e.g. to save it. */
   onSay?: (text: string) => void
   /** Saved chat loaded at start. */
@@ -118,7 +120,7 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
       {!wardrobe && controller && (
         <button
           type="button"
-          aria-label="Dress up"
+          aria-label="My character"
           className="fixed left-3 z-30 flex h-10 items-center gap-1 rounded-full bg-white/80 px-3 text-sm font-semibold text-[#7a3653] shadow"
           style={{ top: 'calc(env(safe-area-inset-top) + 10px)' }}
           onClick={() => {
@@ -126,7 +128,7 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
             controller.focusOnMe(true)
           }}
         >
-          👗 Dress up
+          ✨ My character
         </button>
       )}
       <ActionWheel at={wheel?.at ?? null} items={wheel?.items ?? []} onPick={pick} onClose={() => setWheel(null)} />
@@ -166,6 +168,7 @@ export function Hud({ controller, onLookChange, onSay, history = [], extra }: {
           <WardrobePanel
             key="wardrobe"
             look={wardrobe}
+            onUploadAvatar={onUploadAvatar}
             onChange={(look) => {
               setWardrobe(look)
               controller?.setMyLook(look)

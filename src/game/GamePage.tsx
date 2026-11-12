@@ -5,7 +5,7 @@ import { defaultLook, type CharacterLook } from './character/look'
 import { createLocalRoom } from './net/localRoom'
 import { createSupabaseRoom } from './net/supabaseRoom'
 import { supabase } from './net/supabase'
-import { insertChat, loadMyProfile, loadPartner, loadRecentChat, saveLook, type Profile } from './net/profile'
+import { avatarUrl, insertChat, loadMyProfile, loadPartner, loadRecentChat, saveLook, uploadAvatar, type Profile } from './net/profile'
 import type { PresenceState } from './net/protocol'
 import type { Room } from './net/room'
 import type { Identity } from './sim/sim'
@@ -48,7 +48,7 @@ function Game({ setup }: { setup: Setup }) {
   useEffect(() => {
     const start = { x: SPAWN.x + (setup.me.role === 'female' ? -0.6 : 0.6), z: SPAWN.z }
     const presence: PresenceState = { ...setup.me, pos: start, facing: Math.PI, activity: 'idle' }
-    const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName, lite: liteGraphics() })
+    const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName, lite: liteGraphics(), resolveAvatar: supabase && setup.houseId ? (path) => avatarUrl(supabase!, path) : undefined })
     // No rubber-band scrolling behind the game on iOS.
     document.body.style.overscrollBehavior = 'none'
     void g.start().then(() => setGame(g))
@@ -67,17 +67,21 @@ function Game({ setup }: { setup: Setup }) {
   const onSay = (text: string) => {
     if (supabase && setup.houseId) void insertChat(supabase, setup.houseId, text).catch(console.warn)
   }
+  const onUploadAvatar = async (file: File) => {
+    const path = await uploadAvatar(supabase!, file)
+    game?.setMyAvatar(path)
+  }
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#1a0f1f]" style={{ height: '100dvh', fontFamily: GAME_FONT }}>
       <canvas ref={ref} className="block h-full w-full" style={{ touchAction: 'none' }} />
-      <Hud controller={game} onLookChange={onLookChange} onSay={onSay} history={setup.history} />
+      <Hud controller={game} onLookChange={onLookChange} onSay={onSay} history={setup.history} onUploadAvatar={supabase && setup.houseId ? onUploadAvatar : undefined} />
       {birthdayName && game && <BirthdayBanner name={birthdayName} isHer={setup.me.role === 'female'} />}
     </div>
   )
 }
 
-const toIdentity = (p: Profile): Identity => ({ userId: p.id, name: p.name, role: p.role, look: p.look })
+const toIdentity = (p: Profile): Identity => ({ userId: p.id, name: p.name, role: p.role, look: p.look, avatar: p.avatar })
 
 export default function GamePage() {
   const params = useMemo(() => new URLSearchParams(location.search), [])

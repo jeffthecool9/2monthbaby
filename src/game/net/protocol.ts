@@ -11,6 +11,8 @@ export type PresenceState = {
   facing: number
   activity: Activity
   furniture?: FurnitureId
+  /** Storage path of a custom VRoid (.vrm) character, with a ?v= version suffix. */
+  avatar?: string
 }
 
 export type NetMsg =
@@ -60,6 +62,7 @@ export function parsePresence(x: unknown): PresenceState | null {
     pos: { x: s.pos.x, z: s.pos.z }, facing: s.facing, activity: s.activity as Activity,
   }
   if (typeof s.furniture === 'string') out.furniture = s.furniture as FurnitureId
+  if (typeof s.avatar === 'string' && s.avatar.length <= 200) out.avatar = s.avatar
   return out
 }
 

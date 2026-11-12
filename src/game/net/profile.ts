@@ -3,7 +3,7 @@ import { sanitizeLook, type CharacterLook } from '../character/look'
 import { cleanChat } from './protocol'
 import type { Role, UserId } from '../types'
 
-export type Profile = { id: UserId; name: string; role: Role; houseId: string; look: CharacterLook }
+export type Profile = { id: UserId; name: string; role: Role; houseId: string; look: CharacterLook; avatar?: string }
 export type ChatRow = { id: string; sender: UserId; text: string; createdAt: string }
 
 export function rowToProfile(row: unknown): Profile {
@@ -16,21 +16,56 @@ export function rowToProfile(row: unknown): Profile {
     role: r.role,
     houseId: r.house_id,
     look: sanitizeLook(r.look, r.role),
+    ...(typeof r.avatar_path === 'string' && r.avatar_path ? { avatar: r.avatar_path } : {}),
   }
 }
 
-const COLS = 'id, display_name, role, house_id, look'
+const COLS = 'id, display_name, role, house_id, look, avatar_path'
+const AVATAR_BUCKET = 'avatars'
+const MAX_AVATAR_BYTES = 50 * 1024 * 1024
+
+/** Upload my VRoid character and remember it on my profile. Returns the versioned path. */
+export async function uploadAvatar(c: SupabaseClient, file: File): Promise<string> {
+  if (!file.name.toLowerCase().endsWith('.vrm')) throw new Error('Please choose a .vrm file exported from VRoid Studio.')
+  if (file.size > MAX_AVATAR_BYTES) throw new Error('That file is over 50 MB. In VRoid export, turn on polygon reduction and use a 2048 texture atlas.')
+  const { data: auth } = await c.auth.getUser()
+  if (!auth.user) throw new Error('Not signed in')
+  const key = `${auth.user.id}/avatar.vrm`
+  const { error } = await c.storage.from(AVATAR_BUCKET).upload(key, file, { upsert: true, contentType: 'model/gltf-binary', cacheControl: '3600' })
+  if (error) throw error
+  const path = `${key}?v=${Date.now()}`
+  const { error: e2 } = await c.from('profiles').update({ avatar_path: path }).eq('id', auth.user.id)
+  if (e2) throw e2
+  return path
+}
+
+/** Private, time-limited URL for a stored avatar (only housemates are allowed by storage policy). */
+export async function avatarUrl(c: SupabaseClient, path: string): Promise<string> {
+  const [key, version] = path.split('?')
+  const { data, error } = await c.storage.from(AVATAR_BUCKET).createSignedUrl(key, 60 * 60 * 24)
+  if (error || !data) throw error ?? new Error('no url')
+  return version ? `${data.signedUrl}&${version}` : data.signedUrl
+}
+
+/** Profiles query that still works before migration 0002 has added the avatar_path column. */
+async function queryProfiles(c: SupabaseClient, filter: (q: ReturnType<ReturnType<SupabaseClient['from']>['select']>) => PromiseLike<{ data: unknown[] | null; error: { code?: string } | null }>) {
+  const first = await filter(c.from('profiles').select(COLS))
+  if (first.error?.code === '42703') return filter(c.from('profiles').select(COLS.replace(', avatar_path', '')))
+  return first
+}
 
 export async function loadMyProfile(c: SupabaseClient): Promise<Profile> {
   const { data: auth } = await c.auth.getUser()
   if (!auth.user) throw new Error('not signed in')
-  const { data, error } = await c.from('profiles').select(COLS).eq('id', auth.user.id).single()
+  const id = auth.user.id
+  const { data, error } = await queryProfiles(c, (q) => q.eq('id', id).limit(1))
   if (error) throw error
-  return rowToProfile(data)
+  if (!data?.length) throw { code: 'PGRST116' }
+  return rowToProfile(data[0])
 }
 
 export async function loadPartner(c: SupabaseClient, me: Profile): Promise<Profile | null> {
-  const { data, error } = await c.from('profiles').select(COLS).eq('house_id', me.houseId).neq('id', me.id).limit(1)
+  const { data, error } = await queryProfiles(c, (q) => q.eq('house_id', me.houseId).neq('id', me.id).limit(1))
   if (error) throw error
   return data?.[0] ? rowToProfile(data[0]) : null
 }

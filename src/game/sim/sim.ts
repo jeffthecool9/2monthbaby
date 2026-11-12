@@ -13,7 +13,7 @@ export const WALK_SPEED = 1.6 // m/s
 const APPROACH_TIMEOUT = 4000
 const SNAP_DISTANCE = 0.6
 
-export type Identity = { userId: UserId; name: string; role: Role; look: CharacterLook }
+export type Identity = { userId: UserId; name: string; role: Role; look: CharacterLook; avatar?: string }
 
 export type Avatar = Identity & {
   pos: Vec2
@@ -71,6 +71,7 @@ export type SimEvent =
   | { type: 'interact'; kind: InteractionKind; id: string }
   | { type: 'tap-partner'; screen: { x: number; y: number } }
   | { type: 'face'; facing: number }
+  | { type: 'set-avatar'; avatar: string }
   | { type: 'accept'; id: string }
   | { type: 'use-furniture'; id: FurnitureId; action: FurnitureAction }
   | { type: 'say'; text: string; id: string }
@@ -216,7 +217,7 @@ function onPresence(s: SimState, others: PresenceState[], now: number): SimState
     const next = { ...s, partnerPresence: null, partner: asleep(s.partner, false), hud: [...s.hud, { type: 'partner-online' as const, online: false, name: s.partner.name }] }
     return next.interaction ? endInteraction(next, now) : next
   }
-  let partner: Avatar = { ...s.partner, name: p.name, look: p.look }
+  let partner: Avatar = { ...s.partner, name: p.name, look: p.look, avatar: p.avatar ?? s.partner.avatar }
   const hud = [...s.hud]
   if (!s.partner.online) {
     const activity = p.activity === 'walking' ? 'idle' : p.activity
@@ -315,6 +316,8 @@ export function step(s0: SimState, e: SimEvent, now: number): SimState {
       const msg: InteractMsg = { t: 'interact', id: e.id, from: s.me.userId, to: p.userId, kind: e.kind, at: now }
       return startInteraction({ ...s, outbox: [...s.outbox, msg] }, msg, now)
     }
+    case 'set-avatar':
+      return { ...s, me: { ...s.me, avatar: e.avatar } }
     case 'face':
       if (s.interaction || s.me.activity !== 'idle') return s
       return { ...s, me: { ...s.me, facing: e.facing } }
