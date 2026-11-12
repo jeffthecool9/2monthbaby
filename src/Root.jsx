@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import App from './App'
 
 const GamePage = lazy(() => import('./game/GamePage'))
@@ -16,8 +16,9 @@ export default function Root() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<App />} />
-        <Route path="/home" element={<Suspense fallback={<Loading />}><GamePage /></Suspense>} />
+        <Route path="/" element={<Suspense fallback={<Loading />}><GamePage /></Suspense>} />
+        <Route path="/home" element={<Navigate to={{ pathname: '/', search: location.search }} replace />} />
+        <Route path="/letter" element={<App />} />
       </Routes>
     </BrowserRouter>
   )

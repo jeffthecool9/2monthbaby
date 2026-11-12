@@ -41,8 +41,8 @@ Left menu → **Authentication** → **Sign In / Providers** → **Email**: keep
 
 ## 7. Done
 
-Open `https://2monthbaby.vercel.app/home` on both iPhones, log in, and tap **Share → Add to Home Screen** for a full-screen app icon.
+Open your Sweet Paradise address on both iPhones, log in, and tap **Share → Add to Home Screen** for a full-screen app icon.
 
 **Keep it awake:** free Supabase projects pause after 7 days with nobody logging in. Playing most days prevents that; if it ever pauses, open the Supabase dashboard and click **Restore**.
 
-**Without Supabase** (testing only): `/home?local=1&as=her` and `/home?local=1&as=him` in two tabs of the same browser.
+**Without Supabase** (testing only): `/?local=1&as=her` and `/?local=1&as=him` in two tabs of the same browser.
