@@ -11,7 +11,7 @@ export function ChatLog({ lines, myId, names, onClose }: { lines: LogLine[]; myI
   return (
     <motion.div
       className="fixed inset-x-3 z-20 max-h-[40dvh] overflow-y-auto rounded-3xl bg-white/90 p-3 shadow-xl backdrop-blur"
-      style={{ bottom: 'calc(max(10px, env(safe-area-inset-bottom)) + 104px)' }}
+      style={{ bottom: 'calc(max(10px, env(safe-area-inset-bottom)) + 66px)' }}
       initial={{ y: 30, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 30, opacity: 0 }}

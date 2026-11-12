@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { MAX_CHAT, QUICK_MESSAGES } from '../net/protocol'
+import { MAX_CHAT } from '../net/protocol'
 import type { EmoteKind } from '../types'
 
 const EMOTES: { id: EmoteKind; emoji: string }[] = [
@@ -29,13 +29,6 @@ export function ChatBar({ onSend, onEmote, onToggleLog }: { onSend: (text: strin
           </motion.div>
         )}
       </AnimatePresence>
-      <div className="flex gap-2 overflow-x-auto px-3 pb-2" style={{ scrollbarWidth: 'none' }}>
-        {QUICK_MESSAGES.map((q) => (
-          <button key={q} type="button" className="shrink-0 rounded-full bg-white/85 px-3 py-1.5 text-sm font-medium text-[#7a3653] shadow active:scale-95" onClick={() => onSend(q)}>
-            {q}
-          </button>
-        ))}
-      </div>
       <div className="mx-3 flex items-center gap-2 rounded-full bg-white/90 p-1.5 shadow-lg backdrop-blur">
         <button type="button" className="h-10 w-10 shrink-0 rounded-full bg-[#ffe1ec] text-xl" onClick={() => setEmotes((v) => !v)} aria-label="Emotes">😊</button>
         {onToggleLog && <button type="button" className="h-10 w-10 shrink-0 rounded-full bg-[#ffe1ec] text-lg" onClick={onToggleLog} aria-label="Chat history">💬</button>}

@@ -181,7 +181,7 @@ export function Hud({ controller, onLookChange, onSay, onUploadAvatar, onEarn, w
           type="button"
           aria-label="Actions"
           className="fixed right-3 z-30 flex h-16 w-16 items-center justify-center rounded-full text-3xl text-white shadow-[0_8px_24px_rgba(255,95,147,0.55)]"
-          style={{ bottom: 'calc(max(10px, env(safe-area-inset-bottom)) + 112px)', background: 'radial-gradient(circle at 35% 30%, #ffb3cd, #ff5f93)', touchAction: 'none' }}
+          style={{ bottom: 'calc(max(10px, env(safe-area-inset-bottom)) + 72px)', background: 'radial-gradient(circle at 35% 30%, #ffb3cd, #ff5f93)', touchAction: 'none' }}
           whileTap={{ scale: 0.9 }}
           animate={{ boxShadow: ['0 8px 24px rgba(255,95,147,0.45)', '0 8px 32px rgba(255,95,147,0.8)', '0 8px 24px rgba(255,95,147,0.45)'] }}
           transition={{ duration: 2.4, repeat: Infinity }}
