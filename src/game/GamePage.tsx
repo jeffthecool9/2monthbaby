@@ -13,6 +13,8 @@ import { SPAWN } from './world/layout'
 import { Hud } from './ui/Hud'
 import { LoginScreen } from './ui/LoginScreen'
 import type { LogLine } from './ui/ChatLog'
+import { BirthdayBanner } from './ui/BirthdayBanner'
+import { HER_BIRTHDAY, isBirthdayKL } from './sim/birthday'
 
 const LOCAL_PEOPLE: Record<'her' | 'him', Identity> = {
   her: { userId: 'local-her', name: 'Her', role: 'female', look: defaultLook('female') },
@@ -34,13 +36,18 @@ function Screen({ children }: { children: React.ReactNode }) {
 /** Canvas + HUD for a ready game setup. */
 function Game({ setup }: { setup: Setup }) {
   const ref = useRef<HTMLCanvasElement>(null)
+  const her = setup.me.role === 'female' ? setup.me : setup.partner?.role === 'female' ? setup.partner : null
+  const birthdayName = useMemo(() => {
+    const forced = new URLSearchParams(location.search).has('bday')
+    return her && (forced || isBirthdayKL(new Date(), HER_BIRTHDAY.month, HER_BIRTHDAY.day)) ? her.name : null
+  }, [her])
   const [game, setGame] = useState<GameController | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const start = { x: SPAWN.x + (setup.me.role === 'female' ? -0.6 : 0.6), z: SPAWN.z }
     const presence: PresenceState = { ...setup.me, pos: start, facing: Math.PI, activity: 'idle' }
-    const g = new GameController(ref.current!, setup.room, presence, setup.partner)
+    const g = new GameController(ref.current!, setup.room, presence, setup.partner, { birthdayName })
     void g.start().then(() => setGame(g))
     if (import.meta.env.DEV) (window as unknown as { __game: GameController }).__game = g
     return () => {
@@ -62,6 +69,7 @@ function Game({ setup }: { setup: Setup }) {
     <div className="fixed inset-0 overflow-hidden bg-[#1a0f1f]" style={{ height: '100dvh', fontFamily: GAME_FONT }}>
       <canvas ref={ref} className="block h-full w-full" style={{ touchAction: 'none' }} />
       <Hud controller={game} onLookChange={onLookChange} onSay={onSay} history={setup.history} />
+      {birthdayName && game && <BirthdayBanner name={birthdayName} isHer={setup.me.role === 'female'} />}
     </div>
   )
 }

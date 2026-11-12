@@ -5,6 +5,7 @@ import { sampleClip } from './character/poses'
 import { createScene, type SceneBundle } from './engine/createScene'
 import { buildApartment, type Apartment } from './engine/apartment'
 import { CHIBI_TOP, Chibi } from './engine/chibi'
+import { addBirthdayDecor } from './engine/decor'
 import { classifyGesture, type PointerSample } from './input/gesture'
 import { cleanChat, type PresenceState } from './net/protocol'
 import type { Room } from './net/room'
@@ -33,12 +34,15 @@ export class GameController {
   private lite: boolean
   private disposed = false
 
-  constructor(canvas: HTMLCanvasElement, room: Room, me: PresenceState, partnerHint: Identity | null, opts: { lite?: boolean } = {}) {
+  private birthdayName: string | null
+
+  constructor(canvas: HTMLCanvasElement, room: Room, me: PresenceState, partnerHint: Identity | null, opts: { lite?: boolean; birthdayName?: string | null } = {}) {
     this.canvas = canvas
     this.room = room
     this.meStart = me
     this.partnerHint = partnerHint
     this.lite = !!opts.lite
+    this.birthdayName = opts.birthdayName ?? null
     this.sim = createSim({ userId: me.userId, name: me.name, role: me.role, look: me.look }, me.pos, partnerHint)
   }
 
@@ -47,6 +51,7 @@ export class GameController {
     this.bundle = bundle
     this.apt = await buildApartment(bundle.scene, bundle.shadows)
     if (this.disposed) return
+    if (this.birthdayName) addBirthdayDecor(bundle.scene, this.birthdayName)
     this.unsubs.push(this.room.onMessage((msg) => this.dispatch({ type: 'net', msg })))
     this.unsubs.push(this.room.onPresence((others) => this.dispatch({ type: 'presence', others })))
     await this.room.join({ ...this.meStart })
