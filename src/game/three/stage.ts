@@ -12,6 +12,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { SPAWN, UNIT } from '../world/layout'
+import type { Daylight } from '../world/daylight'
 
 export type Stage = {
   renderer: WebGLRenderer
@@ -23,6 +24,8 @@ export type Stage = {
   screenOffset: Vector2
   /** Feed the frame time (ms) so quality can drop automatically on slow phones. */
   adapt(dt: number): void
+  /** Apply the Kuala Lumpur time of day to sun, sky light, fog and exposure. */
+  setDaylight(d: Daylight): void
   render(): void
   resize(): void
   dispose(): void
@@ -76,7 +79,12 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
   sun.shadow.bias = -0.0004
   sun.shadow.normalBias = 0.025
   scene.add(sun, sun.target)
-  scene.add(new HemisphereLight('#ffe9f2', '#3b2a3a', 0.35))
+  const hemi = new HemisphereLight('#ffe9f2', '#3b2a3a', 0.35)
+  scene.add(hemi)
+  const moon = new DirectionalLight('#9fb4ff', 0)
+  moon.position.set(UNIT.width / 2 - 6, 10, UNIT.depth + 8)
+  moon.target.position.set(UNIT.width / 2, 0, UNIT.depth / 2)
+  scene.add(moon, moon.target)
 
   let composer: EffectComposer | null = null
   let gtao: GTAOPass | null = null
@@ -121,6 +129,21 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
     }
   }
 
+  const setDaylight = (d: Daylight) => {
+    const r = 30
+    sun.position.set(UNIT.width / 2 + d.sunDir[0] * r, Math.max(1.5, d.sunDir[1] * r), UNIT.depth / 2 + d.sunDir[2] * r)
+    sun.intensity = d.sunIntensity
+    sun.color.setRGB(d.sunColor[0], d.sunColor[1], d.sunColor[2])
+    moon.intensity = d.moonIntensity
+    hemi.intensity = d.ambient
+    hemi.color.setRGB(d.skyMid[0], d.skyMid[1], d.skyMid[2])
+    hemi.groundColor.setRGB(0.25 + 0.1 * (1 - d.night), 0.2, 0.25)
+    ;(scene.fog as FogExp2).color.setRGB(d.haze[0], d.haze[1], d.haze[2])
+    scene.environmentIntensity = 0.25 + 0.4 * (1 - d.night)
+    renderer.toneMappingExposure = 0.92 - 0.05 * d.night
+    if (bloom) bloom.threshold = 0.92 + 0.3 * (1 - d.night)
+  }
+
   const screenOffset = new Vector2(0, 0)
   const resize = () => {
     const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight
@@ -144,7 +167,7 @@ export function createStage(canvas: HTMLCanvasElement, opts: { lite?: boolean } 
   }
 
   return {
-    renderer, scene, camera, controls, sun, screenOffset, adapt, render, resize,
+    renderer, scene, camera, controls, sun, screenOffset, adapt, setDaylight, render, resize,
     dispose() {
       controls.dispose()
       composer?.dispose()

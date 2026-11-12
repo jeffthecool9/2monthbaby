@@ -7,6 +7,7 @@ import { buildApartment, type Apartment } from './three/apartment'
 import { buildCity, type City } from './three/city'
 import { Avatar, PLACEHOLDER_AVATAR } from './three/avatar'
 import { addBirthdayDecor } from './three/decor'
+import { daylight, klClock } from './world/daylight'
 import { classifyGesture, type PointerSample } from './input/gesture'
 import { cleanChat, type GameId, type GameOp, type PresenceState } from './net/protocol'
 import type { Room } from './net/room'
@@ -58,6 +59,7 @@ export class GameController {
   private camGoal: CamGoal | null = null
   private savedCam: { radius: number; phi: number } | null = null
   private lastHop = 0
+  private lastDaylight = 0
 
   constructor(canvas: HTMLCanvasElement, room: Room, me: PresenceState, partnerHint: Identity | null, opts: GameOptions = {}) {
     this.canvas = canvas
@@ -316,6 +318,15 @@ export class GameController {
     }
 
     this.apt?.updateCutaway({ x: camera.position.x, z: camera.position.z }, me.pos)
+    // Real Malaysia time (dev: ?hour=21.5 to preview). Recomputed every half second.
+    if (now - this.lastDaylight > 500) {
+      this.lastDaylight = now
+      const forced = import.meta.env.DEV ? new URLSearchParams(location.search).get('hour') : null
+      const d = daylight(forced ? Number(forced) : klClock(new Date()))
+      stage.setDaylight(d)
+      this.city?.setDaylight(d)
+      this.apt?.setDaylight(d)
+    }
     this.apt?.update(dt, now)
     this.city?.update(dt, now)
     this.birthday?.update(now)

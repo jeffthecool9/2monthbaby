@@ -5,6 +5,7 @@ import {
   PointsMaterial, RepeatWrapping, ShaderMaterial, SphereGeometry, SRGBColorSpace, Sprite, SpriteMaterial, Vector3,
 } from 'three'
 import { UNIT } from '../world/layout'
+import type { Daylight } from '../world/daylight'
 
 import { GROUND_Y, buildStreets } from './streets'
 const CENTRE = new Vector3(UNIT.width / 2, 0, UNIT.depth / 2)
@@ -52,7 +53,7 @@ function facadeTextures(seed: number) {
   return { base, emissive }
 }
 
-export type City = { root: Group; update(dt: number, t: number): void }
+export type City = { root: Group; update(dt: number, t: number): void; setDaylight(d: Daylight): void }
 
 export function buildCity(opts: { lite?: boolean } = {}): City {
   const root = new Group()
@@ -64,15 +65,25 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
     new SphereGeometry(600, 48, 24),
     new ShaderMaterial({
       side: BackSide, depthWrite: false, fog: false,
-      uniforms: { sunDir: { value: new Vector3(0.25, 0.08, 1).normalize() } },
+      uniforms: {
+        sunDir: { value: new Vector3(0.25, 0.08, 1).normalize() },
+        top: { value: new Vector3(0.16, 0.17, 0.42) }, mid: { value: new Vector3(0.62, 0.38, 0.62) }, hor: { value: new Vector3(1.0, 0.72, 0.55) },
+        sunStrength: { value: 1 }, night: { value: 0 },
+      },
       vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: `varying vec3 vDir; uniform vec3 sunDir;
+      fragmentShader: `varying vec3 vDir; uniform vec3 sunDir, top, mid, hor; uniform float sunStrength, night;
+        float hash(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,37.719))) * 43758.5453); }
         void main(){
-          float h = clamp(vDir.y, -0.2, 1.0);
-          vec3 top = vec3(0.16,0.17,0.42), mid = vec3(0.62,0.38,0.62), hor = vec3(1.0,0.72,0.55), below = vec3(0.32,0.24,0.38);
+          vec3 d = normalize(vDir);
+          float h = clamp(d.y, -0.2, 1.0);
+          vec3 below = mix(hor, vec3(0.1,0.09,0.14), 0.5);
           vec3 c = h > 0.0 ? mix(hor, mix(mid, top, smoothstep(0.15,0.75,h)), smoothstep(0.0,0.25,h)) : mix(hor, below, smoothstep(0.0,0.2,-h));
-          float s = max(dot(normalize(vDir), sunDir), 0.0);
-          c += vec3(1.0,0.75,0.45) * pow(s, 18.0) * 0.9 + vec3(1.0,0.85,0.6) * pow(s, 400.0) * 2.5;
+          float s = max(dot(d, sunDir), 0.0);
+          c += (vec3(1.0,0.75,0.45) * pow(s, 18.0) * 0.9 + vec3(1.0,0.85,0.6) * pow(s, 400.0) * 2.5) * sunStrength;
+          // Stars fade in at night.
+          vec3 cell = floor(d * 140.0);
+          float star = step(0.9985, hash(cell)) * smoothstep(0.05, 0.4, d.y);
+          c += vec3(star) * night * 0.9;
           gl_FragColor = vec4(c, 1.0);
         }`,
     }),
@@ -91,8 +102,10 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
   const perStyle = Math.ceil(count / styles.length)
   const dummy = new Object3D()
   const tint = new Color()
+  const facadeMats: MeshStandardMaterial[] = []
   styles.forEach((tx, si) => {
     const m = new MeshStandardMaterial({ map: tx.base, emissiveMap: tx.emissive, emissive: new Color('#ffffff'), emissiveIntensity: 1.25, roughness: 0.35, metalness: 0.4 })
+    facadeMats.push(m)
     const mesh = new InstancedMesh(new BoxGeometry(1, 1, 1), m, perStyle)
     let i = 0
     while (i < perStyle) {
@@ -204,5 +217,16 @@ export function buildCity(opts: { lite?: boolean } = {}): City {
     })
   }
 
-  return { root, update: (dt, t) => movers.forEach((m) => m(dt, t)) }
+  const skyMat = sky.material as ShaderMaterial
+  const setDaylight = (d: Daylight) => {
+    skyMat.uniforms.sunDir.value.set(d.sunDir[0], d.sunDir[1], d.sunDir[2])
+    skyMat.uniforms.top.value.set(...d.skyTop)
+    skyMat.uniforms.mid.value.set(...d.skyMid)
+    skyMat.uniforms.hor.value.set(...d.skyHorizon)
+    skyMat.uniforms.sunStrength.value = d.sunElevation > -0.1 ? 1 : 0
+    skyMat.uniforms.night.value = d.night
+    for (const m of facadeMats) m.emissiveIntensity = 0.05 + 1.3 * d.windowGlow
+    streets.setDaylight(d)
+  }
+  return { root, update: (dt, t) => movers.forEach((m) => m(dt, t)), setDaylight }
 }

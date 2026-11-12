@@ -5,6 +5,7 @@ import {
   MeshStandardMaterial, Object3D, PlaneGeometry, RepeatWrapping, SphereGeometry, SRGBColorSpace,
 } from 'three'
 import { UNIT } from '../world/layout'
+import type { Daylight } from '../world/daylight'
 
 export const GROUND_Y = -84
 const CX = UNIT.width / 2, CZ = UNIT.depth / 2
@@ -50,7 +51,7 @@ const ROADS: Road[] = [
 ]
 const ROAD_W = 16
 
-export type Streets = { root: Group; update(dt: number, t: number): void }
+export type Streets = { root: Group; update(dt: number, t: number): void; setDaylight(d: Daylight): void }
 
 export function buildStreets(opts: { lite?: boolean } = {}): Streets {
   const root = new Group()
@@ -131,7 +132,8 @@ export function buildStreets(opts: { lite?: boolean } = {}): Streets {
     lampSpots.push(rd.axis === 'x' ? [s, rd.at - off] : [rd.at - off, s])
   }
   const poles = new InstancedMesh(new CylinderGeometry(0.12, 0.15, 7, 6), new MeshStandardMaterial({ color: '#3a3842', roughness: 0.5, metalness: 0.6 }), lampSpots.length)
-  const heads = new InstancedMesh(new SphereGeometry(0.45, 8, 6), new MeshBasicMaterial({ color: new Color('#ffd08a').multiplyScalar(2.2), toneMapped: false }), lampSpots.length)
+  const headMat = new MeshBasicMaterial({ color: new Color('#ffd08a').multiplyScalar(2.2), toneMapped: false })
+  const heads = new InstancedMesh(new SphereGeometry(0.45, 8, 6), headMat, lampSpots.length)
   lampSpots.forEach(([x, z], i) => {
     dummy.scale.setScalar(1)
     dummy.position.set(x, y0 + 3.5, z)
@@ -146,7 +148,8 @@ export function buildStreets(opts: { lite?: boolean } = {}): Streets {
   // Low-rise shops along the roads with lit storefronts.
   const shopCount = opts.lite ? 50 : 110
   const shops = new InstancedMesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial({ roughness: 0.7 }), shopCount)
-  const fronts = new InstancedMesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial({ toneMapped: false }), shopCount)
+  const frontMat = new MeshBasicMaterial({ toneMapped: false })
+  const fronts = new InstancedMesh(new BoxGeometry(1, 1, 1), frontMat, shopCount)
   const col = new Color()
   let placed = 0
   while (placed < shopCount) {
@@ -180,7 +183,8 @@ export function buildStreets(opts: { lite?: boolean } = {}): Streets {
   const carN = ROADS.length * perRoad
   const bodies = new InstancedMesh(new BoxGeometry(2, 1.5, 4.4), new MeshStandardMaterial({ roughness: 0.25, metalness: 0.6 }), carN)
   const cabins = new InstancedMesh(new BoxGeometry(1.8, 0.9, 2.2), new MeshStandardMaterial({ color: '#1d2230', roughness: 0.1, metalness: 0.8 }), carN)
-  const lights = new InstancedMesh(new BoxGeometry(1.9, 0.3, 0.12), new MeshBasicMaterial({ toneMapped: false }), carN * 2)
+  const carLightMat = new MeshBasicMaterial({ toneMapped: false })
+  const lights = new InstancedMesh(new BoxGeometry(1.9, 0.3, 0.12), carLightMat, carN * 2)
   const carState = Array.from({ length: carN }, (_, i) => {
     const rd = ROADS[Math.floor(i / perRoad)]
     return { rd, s: rd.from + r() * (rd.to - rd.from), dir: i % 2 ? 1 : -1, speed: 9 + r() * 7 }
@@ -233,5 +237,12 @@ export function buildStreets(opts: { lite?: boolean } = {}): Streets {
   root.add(fountain, basin)
   movers.push((_dt, t) => (fountain.scale.y = 0.85 + Math.sin(t / 300) * 0.15))
 
-  return { root, update: (dt, t) => movers.forEach((m) => m(dt, t)) }
+  const setDaylight = (d: Daylight) => {
+    const on = d.streetLightsOn
+    headMat.color.set('#ffd08a').multiplyScalar(on ? 2.2 : 0.35)
+    frontMat.color.setScalar(on ? 1 : 0.22)
+    carLightMat.color.setScalar(on ? 1 : 0.6)
+    pond.material.envMapIntensity = 0.6 + d.night
+  }
+  return { root, update: (dt, t) => movers.forEach((m) => m(dt, t)), setDaylight }
 }

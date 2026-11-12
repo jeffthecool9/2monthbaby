@@ -9,6 +9,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { DOORS, FURNITURE, ROOMS, UNIT, WALLS, type FurnitureId, type WallKind } from '../world/layout'
 import { blocksView } from '../world/cutaway'
 import type { Vec2 } from '../types'
+import type { Daylight } from '../world/daylight'
 
 const TEX = '/assets/tex/'
 const WALL_T = 0.12
@@ -22,6 +23,8 @@ export type Apartment = {
   furniture: Map<FurnitureId, Object3D>
   updateCutaway(camera: Vec2, player: Vec2): void
   update(dt: number, t: number): void
+  /** Lamps on after dusk, off by day; fairy lights dim in daylight. */
+  setDaylight(d: Daylight): void
 }
 
 const loader = new TextureLoader()
@@ -192,6 +195,7 @@ async function loadModel(name: string): Promise<Object3D | null> {
 export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apartment> {
   const root = new Group()
   const movers: ((dt: number, t: number) => void)[] = []
+  const lamps: { light?: PointLight; shade: MeshStandardMaterial; glow: number }[] = []
   const floorMeshes: Mesh[] = []
   const furniture = new Map<FurnitureId, Object3D>()
 
@@ -392,14 +396,17 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
       rbox(0.42, 0.5, 0.38, 0.03, oak, x, 0.25, -Lb / 2 + 0.25, g)
       const base = new Mesh(new CylinderGeometry(0.05, 0.07, 0.22, 16), mat('#efe6dc', 0.4))
       base.position.set(x, 0.61, -Lb / 2 + 0.25)
-      const shade = new Mesh(new CylinderGeometry(0.1, 0.14, 0.17, 24, 1, true), new MeshStandardMaterial({ color: '#fff3df', emissive: '#ffc98a', emissiveIntensity: 0.5, side: DoubleSide, roughness: 0.9 }))
+      const shadeMat = new MeshStandardMaterial({ color: '#fff3df', emissive: '#ffc98a', emissiveIntensity: 0.5, side: DoubleSide, roughness: 0.9 })
+      const shade = new Mesh(new CylinderGeometry(0.1, 0.14, 0.17, 24, 1, true), shadeMat)
       shade.position.set(x, 0.8, -Lb / 2 + 0.25)
       g.add(base, shade)
+      let light: PointLight | undefined
       if (!opts.lite && sx === 1) {
-        const light = new PointLight('#ffbf80', 2.2, 3.5, 2)
+        light = new PointLight('#ffbf80', 2.2, 3.5, 2)
         light.position.set(x, 0.85, -Lb / 2 + 0.3)
         g.add(light)
       }
+      lamps.push({ light, shade: shadeMat, glow: 0.5 })
     }
     place('bed', g)
   }
@@ -475,14 +482,17 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
     const pole = new Mesh(new CylinderGeometry(0.012, 0.012, 1.5, 8), brass)
     pole.position.y = 0.75
     const foot = new Mesh(new CylinderGeometry(0.14, 0.16, 0.03, 24), brass)
-    const shade = new Mesh(new CylinderGeometry(0.17, 0.24, 0.3, 32, 1, true), new MeshStandardMaterial({ color: '#fff6e8', emissive: '#ffcf95', emissiveIntensity: 0.55, side: DoubleSide, roughness: 0.9 }))
+    const floorShade = new MeshStandardMaterial({ color: '#fff6e8', emissive: '#ffcf95', emissiveIntensity: 0.55, side: DoubleSide, roughness: 0.9 })
+    const shade = new Mesh(new CylinderGeometry(0.17, 0.24, 0.3, 32, 1, true), floorShade)
     shade.position.y = 1.55
     g.add(pole, foot, shade)
+    let light: PointLight | undefined
     if (!opts.lite) {
-      const light = new PointLight('#ffc48a', 3, 4.5, 2)
+      light = new PointLight('#ffc48a', 3, 4.5, 2)
       light.position.y = 1.45
       g.add(light)
     }
+    lamps.push({ light, shade: floorShade, glow: 0.55 })
     g.position.set(3.3, 0, 6.05)
     shadowed(g, false)
     root.add(g)
@@ -493,15 +503,18 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
     const table = spec('diningTable')
     const cord = new Mesh(new CylinderGeometry(0.005, 0.005, 0.9, 6), mat('#222', 0.5))
     cord.position.set(table.pos.x, UNIT.wallHeight - 0.45, table.pos.z)
-    const shade = new Mesh(new SphereGeometry(0.2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), new MeshStandardMaterial({ color: '#f2e7d8', emissive: '#ffd39b', emissiveIntensity: 0.9, side: DoubleSide, roughness: 0.4 }))
+    const pendantMat = new MeshStandardMaterial({ color: '#f2e7d8', emissive: '#ffd39b', emissiveIntensity: 0.9, side: DoubleSide, roughness: 0.4 })
+    const shade = new Mesh(new SphereGeometry(0.2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), pendantMat)
     shade.rotation.x = Math.PI
     shade.position.set(table.pos.x, UNIT.wallHeight - 0.9, table.pos.z)
     root.add(cord, shade)
+    let light: PointLight | undefined
     if (!opts.lite) {
-      const light = new PointLight('#ffcf99', 2.6, 4, 2)
+      light = new PointLight('#ffcf99', 2.6, 4, 2)
       light.position.set(table.pos.x, UNIT.wallHeight - 1.05, table.pos.z)
       root.add(light)
     }
+    lamps.push({ light, shade: pendantMat, glow: 0.9 })
   }
 
   // Sheer curtains that sway gently by the window.
@@ -524,6 +537,7 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
     })
   }
 
+  let fairyLevel = 1
   // Fairy lights along the top of the window, twinkling.
   {
     const n = 70
@@ -542,7 +556,7 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
     movers.push((_dt, t) => {
       for (let i = 0; i < n; i++) {
         const k = 0.55 + 0.45 * Math.sin(t / 380 + i * 1.7) * Math.sin(t / 970 + i * 0.6)
-        c.copy(i % 3 ? warm : pink).multiplyScalar(1.4 + k * 1.6)
+        c.copy(i % 3 ? warm : pink).multiplyScalar((1.4 + k * 1.6) * fairyLevel)
         bulbs.setColorAt(i, c)
       }
       bulbs.instanceColor!.needsUpdate = true
@@ -597,5 +611,13 @@ export async function buildApartment(opts: { lite?: boolean } = {}): Promise<Apa
     for (const a of art) a.g.visible = !blocksView(a.seg, camera, player)
   }
 
-  return { root, floorMeshes, furniture, updateCutaway, update: (dt, t) => movers.forEach((m) => m(dt, t)) }
+  const setDaylight = (d: Daylight) => {
+    const on = d.lampsOn ? 1 : 0.08
+    for (const l of lamps) {
+      l.shade.emissiveIntensity = l.glow * on
+      if (l.light) l.light.intensity = (l.light.userData.base ??= l.light.intensity) * (d.lampsOn ? 1 : 0)
+    }
+    fairyLevel = d.lampsOn ? 1 : 0.25
+  }
+  return { root, floorMeshes, furniture, updateCutaway, update: (dt, t) => movers.forEach((m) => m(dt, t)), setDaylight }
 }
